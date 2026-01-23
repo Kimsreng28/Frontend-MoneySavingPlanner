@@ -1,4 +1,6 @@
-import { AppSidebar } from "@/components/app-sidebar"
+import { AppSidebar } from "@/components/app-sidebar";
+import { QuickActions } from "@/components/dashboard/quickAction";
+import { StatsCard } from "@/components/dashboard/statCard";
 import {
   Breadcrumb,
   BreadcrumbItem,
@@ -6,18 +8,32 @@ import {
   BreadcrumbList,
   BreadcrumbPage,
   BreadcrumbSeparator,
-} from "@/components/ui/breadcrumb"
-import { Separator } from "@/components/ui/separator"
+} from "@/components/ui/breadcrumb";
+import { Button } from "@/components/ui/button";
+import { Separator } from "@/components/ui/separator";
 import {
   SidebarInset,
   SidebarProvider,
   SidebarTrigger,
-} from "@/components/ui/sidebar"
+} from "@/components/ui/sidebar";
+import {
+  ArrowUpRight,
+  Calendar,
+  Flame,
+  Plus,
+  Sparkles,
+  Target,
+  TrendingUp,
+  Wallet,
+} from "lucide-react";
 
 export default function Page() {
   return (
     <SidebarProvider>
+      {/* Logo Enterprise */}
       <AppSidebar />
+
+      {/* Main Content */}
       <SidebarInset>
         <header className="flex h-16 shrink-0 items-center gap-2">
           <div className="flex items-center gap-2 px-4">
@@ -40,16 +56,81 @@ export default function Page() {
               </BreadcrumbList>
             </Breadcrumb>
           </div>
+
+          {/* Search Function */}
+
+          {/* Theme Toggle */}
+
+          {/* Notification */}
+
+          {/* User Profile */}
         </header>
-        <div className="flex flex-1 flex-col gap-4 p-4 pt-0">
-          <div className="grid auto-rows-min gap-4 md:grid-cols-3">
-            <div className="bg-muted/50 aspect-video rounded-xl" />
-            <div className="bg-muted/50 aspect-video rounded-xl" />
-            <div className="bg-muted/50 aspect-video rounded-xl" />
+
+        <Separator />
+
+        {/* Button Quick Actions */}
+        <div className="gap-2 p-4">
+          <QuickActions onAddSaving={() => {}} onNewPlan={() => {}} />
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 items-stretch p-4">
+          {/* Stats Cards */}
+          <StatsCard
+            title="Total Saved"
+            value="$1,234"
+            subtitle="Across all plans"
+            icon={Wallet}
+            variant="primary"
+            trend={{ value: 12, isPositive: true }}
+          />
+          <StatsCard
+            title="Active Plans"
+            value="2"
+            subtitle="In progress"
+            icon={Target}
+          />
+          <StatsCard
+            title="Current Streak"
+            value="5"
+            subtitle="Best: 28 days"
+            icon={Flame}
+            variant="accent"
+          />
+          <StatsCard
+            title="This Month"
+            value="$1,234"
+            subtitle="+$130 vs last month"
+            icon={TrendingUp}
+            trend={{ value: 18, isPositive: true }}
+          />
+        </div>
+
+        {/* Charts */}
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3 items-stretch p-4">
+          {/* Overall Progress */}
+          <div className="card-elevated bg-muted/50 rounded-xl flex flex-col h-full min-h-[300px]">
+            <div className="flex items-center justify-between p-4 mb-4">
+              <h3 className="font-display font-semibold text-lg text-foreground">
+                Overall Progress
+              </h3>
+              <Sparkles className="h-5 w-5 text-primary" />
+            </div>
+            {/* Content */}
+            <div className="flex-1 p-4"></div>
           </div>
-          <div className="bg-muted/50 min-h-[100vh] flex-1 rounded-xl md:min-h-min" />
+
+          {/* Savings Chart */}
+          <div className="lg:col-span-2 bg-muted/50 rounded-xl flex flex-col h-full min-h-[300px]">
+            <div className="flex items-center justify-between p-4 mb-4">
+              <h3 className="font-display font-semibold text-lg text-foreground">
+                Savings Growth
+              </h3>
+            </div>
+            {/* Content */}
+            <div className="flex-1 p-4"></div>
+          </div>
         </div>
       </SidebarInset>
     </SidebarProvider>
-  )
+  );
 }

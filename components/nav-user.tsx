@@ -1,4 +1,4 @@
-"use client"
+"use client";
 
 import {
   BadgeCheck,
@@ -6,40 +6,47 @@ import {
   ChevronsUpDown,
   CreditCard,
   LogOut,
+  MonitorCog,
+  Moon,
   Sparkles,
-} from "lucide-react"
+  Sun,
+  SunMoon,
+} from "lucide-react";
 
-import {
-  Avatar,
-  AvatarFallback,
-  AvatarImage,
-} from "@/components/ui/avatar"
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuGroup,
   DropdownMenuItem,
   DropdownMenuLabel,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu"
+} from "@/components/ui/dropdown-menu";
 import {
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
   useSidebar,
-} from "@/components/ui/sidebar"
+} from "@/components/ui/sidebar";
+import { Button } from "./ui/button";
+import { useTheme } from "next-themes";
 
 export function NavUser({
   user,
 }: {
   user: {
-    name: string
-    email: string
-    avatar: string
-  }
+    name: string;
+    email: string;
+    avatar: string;
+  };
 }) {
-  const { isMobile } = useSidebar()
+  const { isMobile } = useSidebar();
+
+  // Set theme
+  const { theme, setTheme } = useTheme();
 
   return (
     <SidebarMenu>
@@ -92,6 +99,33 @@ export function NavUser({
                 <BadgeCheck />
                 Account
               </DropdownMenuItem>
+              {/* dropdown menu for dark mode */}
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <DropdownMenuItem>
+                    <SunMoon /> Theme
+                  </DropdownMenuItem>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  <DropdownMenuRadioGroup
+                    value={theme}
+                    onValueChange={setTheme}
+                  >
+                    <DropdownMenuRadioItem value="light">
+                      <Sun />
+                      Light
+                    </DropdownMenuRadioItem>
+                    <DropdownMenuRadioItem value="dark">
+                      <Moon />
+                      Dark
+                    </DropdownMenuRadioItem>
+                    <DropdownMenuRadioItem value="system">
+                      <MonitorCog />
+                      System
+                    </DropdownMenuRadioItem>
+                  </DropdownMenuRadioGroup>
+                </DropdownMenuContent>
+              </DropdownMenu>
               <DropdownMenuItem>
                 <CreditCard />
                 Billing
@@ -110,5 +144,5 @@ export function NavUser({
         </DropdownMenu>
       </SidebarMenuItem>
     </SidebarMenu>
-  )
+  );
 }
