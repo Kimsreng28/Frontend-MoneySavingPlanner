@@ -1,4 +1,5 @@
 import { AppSidebar } from "@/components/app-sidebar";
+import { Header } from "@/components/dashboard/header";
 import { QuickActions } from "@/components/dashboard/quickAction";
 import { StatsCard } from "@/components/dashboard/statCard";
 import {
@@ -28,6 +29,14 @@ import {
 } from "lucide-react";
 
 export default function Page() {
+  // Greeting
+  const greeting = () => {
+    const hour = new Date().getHours();
+    if (hour < 12) return "Good morning";
+    if (hour < 18) return "Good afternoon";
+    return "Good evening";
+  };
+
   return (
     <SidebarProvider>
       {/* Logo Enterprise */}
@@ -35,36 +44,11 @@ export default function Page() {
 
       {/* Main Content */}
       <SidebarInset>
-        <header className="flex h-16 shrink-0 items-center gap-2">
-          <div className="flex items-center gap-2 px-4">
-            <SidebarTrigger className="-ml-1" />
-            <Separator
-              orientation="vertical"
-              className="mr-2 data-[orientation=vertical]:h-4"
-            />
-            <Breadcrumb>
-              <BreadcrumbList>
-                <BreadcrumbItem className="hidden md:block">
-                  <BreadcrumbLink href="#">
-                    Building Your Application
-                  </BreadcrumbLink>
-                </BreadcrumbItem>
-                <BreadcrumbSeparator className="hidden md:block" />
-                <BreadcrumbItem>
-                  <BreadcrumbPage>Data Fetching</BreadcrumbPage>
-                </BreadcrumbItem>
-              </BreadcrumbList>
-            </Breadcrumb>
-          </div>
-
-          {/* Search Function */}
-
-          {/* Theme Toggle */}
-
-          {/* Notification */}
-
-          {/* User Profile */}
-        </header>
+        {/* Header */}
+        <Header
+          title={`${greeting()}, KIM!`}
+          subtitle="Here's your savings overview for today"
+        />
 
         <Separator />
 
