@@ -11,6 +11,7 @@ import {
   Sparkles,
   Sun,
   SunMoon,
+  User,
 } from "lucide-react";
 
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -31,22 +32,77 @@ import {
   SidebarMenuItem,
   useSidebar,
 } from "@/components/ui/sidebar";
-import { Button } from "./ui/button";
 import { useTheme } from "next-themes";
+import { useAuth } from "@/context/AuthContext";
+import { useRouter } from "next/navigation";
+import { useState, useEffect } from "react";
+import apiClient from "@/api/api-client"; // Use apiClient instead of getAvatarUrl
 
-export function NavUser({
-  user,
-}: {
-  user: {
-    name: string;
-    email: string;
-    avatar: string;
-  };
-}) {
+export function NavUser() {
   const { isMobile } = useSidebar();
-
-  // Set theme
   const { theme, setTheme } = useTheme();
+  const { user, logout } = useAuth();
+  const router = useRouter();
+  const [avatarDataUrl, setAvatarDataUrl] = useState<string | null>(null);
+
+  // Fetch avatar when user changes
+  useEffect(() => {
+    const fetchAvatar = async () => {
+      if (!user?.id) {
+        setAvatarDataUrl(null);
+        return;
+      }
+
+      try {
+        const response = await apiClient.get(`/users/avatar/${user.id}`, {
+          responseType: 'blob',
+        });
+
+        const blob = new Blob([response.data], { type: response.headers['content-type'] });
+        const dataUrl = URL.createObjectURL(blob);
+        setAvatarDataUrl(dataUrl);
+      } catch (error) {
+        console.error('Failed to load avatar in NavUser:', error);
+        setAvatarDataUrl(null);
+      }
+    };
+
+    fetchAvatar();
+
+    // Cleanup function
+    return () => {
+      if (avatarDataUrl) {
+        URL.revokeObjectURL(avatarDataUrl);
+      }
+    };
+  }, [user?.id]);
+
+  const getInitials = (email: string) => {
+    if (!email) return 'U';
+    const parts = email.split("@")[0];
+    if (parts.includes(".")) {
+      return parts
+        .split(".")
+        .map((part) => part.charAt(0))
+        .join("")
+        .toUpperCase()
+        .substring(0, 2);
+    }
+    return parts.substring(0, 2).toUpperCase();
+  };
+
+  const handleLogout = async () => {
+    try {
+      await logout();
+      router.push("/login");
+    } catch (error) {
+      console.error("Logout failed:", error);
+    }
+  };
+
+  const handleProfile = () => {
+    router.push("/profile");
+  };
 
   return (
     <SidebarMenu>
@@ -58,12 +114,26 @@ export function NavUser({
               className="data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground"
             >
               <Avatar className="h-8 w-8 rounded-lg">
-                <AvatarImage src={user.avatar} alt={user.name} />
-                <AvatarFallback className="rounded-lg">CN</AvatarFallback>
+                {avatarDataUrl ? (
+                  <AvatarImage
+                    src={avatarDataUrl}
+                    alt={user?.email || "User"}
+                    onError={() => {
+                      setAvatarDataUrl(null);
+                    }}
+                  />
+                ) : null}
+                <AvatarFallback className="rounded-lg bg-primary/10 text-primary">
+                  {user ? getInitials(user.email) : "U"}
+                </AvatarFallback>
               </Avatar>
               <div className="grid flex-1 text-left text-sm leading-tight">
-                <span className="truncate font-medium">{user.name}</span>
-                <span className="truncate text-xs">{user.email}</span>
+                <span className="truncate font-medium">
+                  {user?.email?.split("@")[0] || "User"}
+                </span>
+                <span className="truncate text-xs">
+                  {user?.email || "user@example.com"}
+                </span>
               </div>
               <ChevronsUpDown className="ml-auto size-4" />
             </SidebarMenuButton>
@@ -77,67 +147,88 @@ export function NavUser({
             <DropdownMenuLabel className="p-0 font-normal">
               <div className="flex items-center gap-2 px-1 py-1.5 text-left text-sm">
                 <Avatar className="h-8 w-8 rounded-lg">
-                  <AvatarImage src={user.avatar} alt={user.name} />
-                  <AvatarFallback className="rounded-lg">CN</AvatarFallback>
+                  {avatarDataUrl ? (
+                    <AvatarImage
+                      src={avatarDataUrl}
+                      alt={user?.email || "User"}
+                    />
+                  ) : (
+                    <AvatarFallback className="rounded-lg bg-primary/10 text-primary">
+                      {user ? getInitials(user.email) : "U"}
+                    </AvatarFallback>
+                  )}
                 </Avatar>
                 <div className="grid flex-1 text-left text-sm leading-tight">
-                  <span className="truncate font-medium">{user.name}</span>
-                  <span className="truncate text-xs">{user.email}</span>
+                  <span className="truncate font-medium">
+                    {user?.email?.split("@")[0] || "User"}
+                  </span>
+                  <span className="truncate text-xs">
+                    {user?.email || "user@example.com"}
+                  </span>
+                  {user?.role && (
+                    <span className="mt-1 truncate text-xs text-muted-foreground">
+                      Role: {user.role.charAt(0).toUpperCase() + user.role.slice(1)}
+                    </span>
+                  )}
                 </div>
               </div>
             </DropdownMenuLabel>
             <DropdownMenuSeparator />
             <DropdownMenuGroup>
+              <DropdownMenuItem onClick={handleProfile}>
+                <User className="mr-2 h-4 w-4" />
+                Profile
+              </DropdownMenuItem>
               <DropdownMenuItem>
-                <Sparkles />
+                <Sparkles className="mr-2 h-4 w-4" />
                 Upgrade to Pro
               </DropdownMenuItem>
             </DropdownMenuGroup>
             <DropdownMenuSeparator />
             <DropdownMenuGroup>
               <DropdownMenuItem>
-                <BadgeCheck />
+                <BadgeCheck className="mr-2 h-4 w-4" />
                 Account
               </DropdownMenuItem>
-              {/* dropdown menu for dark mode */}
+              {/* Theme dropdown menu */}
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
-                  <DropdownMenuItem>
-                    <SunMoon /> Theme
+                  <DropdownMenuItem
+                    onSelect={(e) => e.preventDefault()}
+                    className="cursor-pointer"
+                  >
+                    <SunMoon className="mr-2 h-4 w-4" /> Theme
                   </DropdownMenuItem>
                 </DropdownMenuTrigger>
-                <DropdownMenuContent align="end">
-                  <DropdownMenuRadioGroup
-                    value={theme}
-                    onValueChange={setTheme}
-                  >
+                <DropdownMenuContent align="end" className="w-48">
+                  <DropdownMenuRadioGroup value={theme} onValueChange={setTheme}>
                     <DropdownMenuRadioItem value="light">
-                      <Sun />
+                      <Sun className="mr-2 h-4 w-4" />
                       Light
                     </DropdownMenuRadioItem>
                     <DropdownMenuRadioItem value="dark">
-                      <Moon />
+                      <Moon className="mr-2 h-4 w-4" />
                       Dark
                     </DropdownMenuRadioItem>
                     <DropdownMenuRadioItem value="system">
-                      <MonitorCog />
+                      <MonitorCog className="mr-2 h-4 w-4" />
                       System
                     </DropdownMenuRadioItem>
                   </DropdownMenuRadioGroup>
                 </DropdownMenuContent>
               </DropdownMenu>
               <DropdownMenuItem>
-                <CreditCard />
+                <CreditCard className="mr-2 h-4 w-4" />
                 Billing
               </DropdownMenuItem>
               <DropdownMenuItem>
-                <Bell />
+                <Bell className="mr-2 h-4 w-4" />
                 Notifications
               </DropdownMenuItem>
             </DropdownMenuGroup>
             <DropdownMenuSeparator />
-            <DropdownMenuItem>
-              <LogOut />
+            <DropdownMenuItem onClick={handleLogout} className="text-destructive">
+              <LogOut className="mr-2 h-4 w-4" />
               Log out
             </DropdownMenuItem>
           </DropdownMenuContent>

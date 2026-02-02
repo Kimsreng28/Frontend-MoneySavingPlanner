@@ -1,0 +1,193 @@
+'use client';
+
+import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
+import { authService, LoginCredentials, SignupCredentials, User as ApiUser, AuthResponse } from '@/api/auth';
+
+interface AuthUser {
+    id: string;
+    email: string;
+    role: string;
+    avatarUrl?: string;
+    createdAt?: string;
+}
+
+interface AuthContextType {
+    user: AuthUser | null;
+    isLoading: boolean;
+    login: (credentials: LoginCredentials) => Promise<AuthResponse>;
+    signup: (credentials: SignupCredentials) => Promise<void>;
+    logout: () => Promise<void>;
+    refreshToken: () => Promise<void>;
+}
+
+const AuthContext = createContext<AuthContextType | undefined>(undefined);
+
+export const useAuth = () => {
+    const context = useContext(AuthContext);
+    if (!context) {
+        throw new Error('useAuth must be used within an AuthProvider');
+    }
+    return context;
+};
+
+interface AuthProviderProps {
+    children: ReactNode;
+}
+
+// Helper function to set cookies
+const setCookie = (name: string, value: string, days: number) => {
+    const date = new Date();
+    date.setTime(date.getTime() + (days * 24 * 60 * 60 * 1000));
+    const expires = `expires=${date.toUTCString()}`;
+    document.cookie = `${name}=${value}; ${expires}; path=/; SameSite=Lax`;
+};
+
+// Helper function to get cookie
+const getCookie = (name: string): string | null => {
+    if (typeof document === 'undefined') return null;
+
+    const nameEQ = name + "=";
+    const ca = document.cookie.split(';');
+    for (let i = 0; i < ca.length; i++) {
+        let c = ca[i];
+        while (c.charAt(0) === ' ') c = c.substring(1, c.length);
+        if (c.indexOf(nameEQ) === 0) return c.substring(nameEQ.length, c.length);
+    }
+    return null;
+};
+
+// Helper function to delete cookie
+const deleteCookie = (name: string) => {
+    document.cookie = `${name}=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;`;
+};
+
+export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
+    const [user, setUser] = useState<AuthUser | null>(null);
+    const [isLoading, setIsLoading] = useState(true);
+
+    // Initialize auth state from cookies/localStorage on mount
+    useEffect(() => {
+        const initAuth = () => {
+            if (typeof window !== 'undefined') {
+                // Try to get user from localStorage first
+                const storedUser = localStorage.getItem('user');
+
+                // Check if we have access_token in cookies (for middleware)
+                const cookieToken = getCookie('access_token');
+
+                if (storedUser && cookieToken) {
+                    try {
+                        const parsedUser = JSON.parse(storedUser);
+                        setUser(parsedUser);
+                    } catch (error) {
+                        console.error('AuthProvider: Error parsing stored user:', error);
+                        localStorage.removeItem('user');
+                    }
+                } else if (!cookieToken) {
+                    // No cookie token means we're not logged in for middleware purposes
+                    setUser(null);
+                    localStorage.removeItem('user');
+                }
+            }
+            setIsLoading(false);
+        };
+
+        initAuth();
+    }, []);
+
+    const login = async (credentials: LoginCredentials): Promise<AuthResponse> => {
+        setIsLoading(true);
+        try {
+            const response = await authService.login(credentials);
+
+            // Store tokens in localStorage (for client-side access)
+            localStorage.setItem('access_token', response.accessToken);
+            localStorage.setItem('refresh_token', response.refreshToken);
+            localStorage.setItem('user_id', response.user.id);
+            localStorage.setItem('user', JSON.stringify(response.user));
+
+            // Store tokens in cookies (for middleware access)
+            // Access token: 1 day expiry (matches your JWT expiry)
+            setCookie('access_token', response.accessToken, 1);
+            // Refresh token: 7 days expiry
+            setCookie('refresh_token', response.refreshToken, 7);
+
+            setUser(response.user);
+
+            return response;
+        } catch (error) {
+            console.error('AuthProvider: Login error:', error);
+            throw error;
+        } finally {
+            setIsLoading(false);
+        }
+    };
+
+    const signup = async (credentials: SignupCredentials) => {
+        setIsLoading(true);
+        try {
+            const newUser = await authService.signup(credentials);
+            console.log('AuthProvider: Signup successful, user:', newUser);
+            // After signup, automatically login
+            await login(credentials);
+        } catch (error) {
+            console.error('AuthProvider: Signup error:', error);
+            throw error;
+        } finally {
+            setIsLoading(false);
+        }
+    };
+
+    const logout = async () => {
+        setIsLoading(true);
+        try {
+            const userId = localStorage.getItem('user_id');
+            if (userId) {
+                await authService.logout(userId);
+            }
+        } catch (error) {
+            console.error('AuthProvider: Logout error:', error);
+        } finally {
+            // Clear storage regardless of API call success
+            localStorage.removeItem('access_token');
+            localStorage.removeItem('refresh_token');
+            localStorage.removeItem('user_id');
+            localStorage.removeItem('user');
+
+            // Clear cookies
+            deleteCookie('access_token');
+            deleteCookie('refresh_token');
+
+            setUser(null);
+            setIsLoading(false);
+
+            // Redirect to login
+            if (typeof window !== 'undefined') {
+                window.location.href = '/login';
+            }
+        }
+    };
+
+    const refreshToken = async () => {
+        try {
+            const userId = localStorage.getItem('user_id');
+            const refreshToken = localStorage.getItem('refresh_token');
+
+            if (userId && refreshToken) {
+                const response = await authService.refreshToken(userId, refreshToken);
+                localStorage.setItem('access_token', response.accessToken);
+                // Also update the cookie
+                setCookie('access_token', response.accessToken, 1);
+            }
+        } catch (error) {
+            console.error('AuthProvider: Token refresh failed:', error);
+            logout();
+        }
+    };
+
+    return (
+        <AuthContext.Provider value={{ user, isLoading, login, signup, logout, refreshToken }}>
+            {children}
+        </AuthContext.Provider>
+    );
+};
