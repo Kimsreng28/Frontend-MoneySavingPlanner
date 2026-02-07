@@ -17,26 +17,88 @@ import { Label } from "@/components/ui/label";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
-import { Calendar, Mail, Shield, User, Globe, DollarSign, TrendingUp, CreditCard, Upload, X, Camera } from "lucide-react";
+import {
+  Calendar, Mail, Shield, User, Globe, DollarSign, TrendingUp,
+  CreditCard, Upload, X, Camera, UserIcon, Key, Smartphone,
+  Monitor, LogOut, Check, Eye, EyeOff, QrCode, Copy, CheckCircle,
+  AlertCircle, Loader2,
+  BadgeCheck
+} from "lucide-react";
 import { format } from "date-fns";
 import { useState, useEffect, useRef, ChangeEvent } from "react";
 import { useToast } from "@/hooks/use-toast";
-import apiClient, { getAvatarUrl } from "@/api/api-client";
+import apiClient from "@/api/api-client";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
+import { Textarea } from "@/components/ui/textarea";
+import { TwoFactorSetup } from "@/types/two-factore";
+import { Session } from "@/types/session";
+import { create } from "domain";
+
+
 
 export default function ProfilePage() {
-  const { user, refreshToken } = useAuth();
+  const { user, refreshToken, logout } = useAuth();
   const { toast } = useToast();
   const [isEditing, setIsEditing] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
-  const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
   const [avatarDataUrl, setAvatarDataUrl] = useState<string | null>(null);
   const [profileData, setProfileData] = useState({
     email: user?.email || '',
+    username: user?.username || '',
     currency: 'USD',
     country: 'United States',
     monthlyIncome: 5000,
     riskLevel: 'medium' as 'low' | 'medium' | 'high',
+    createdAt: user?.createdAt || '',
   });
+
+  // Change password states
+  const [showChangePassword, setShowChangePassword] = useState(false);
+  const [currentPassword, setCurrentPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [showCurrentPassword, setShowCurrentPassword] = useState(false);
+  const [showNewPassword, setShowNewPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
+  const [isChangingPassword, setIsChangingPassword] = useState(false);
+
+  // Two-factor authentication states
+  const [showTwoFactorSetup, setShowTwoFactorSetup] = useState(false);
+  const [twoFactorSetup, setTwoFactorSetup] = useState<TwoFactorSetup | null>(null);
+  const [twoFactorToken, setTwoFactorToken] = useState('');
+  const [isTwoFactorEnabled, setIsTwoFactorEnabled] = useState(false);
+  const [isSettingUp2FA, setIsSettingUp2FA] = useState(false);
+  const [isVerifying2FA, setIsVerifying2FA] = useState(false);
+  const [showDisable2FA, setShowDisable2FA] = useState(false);
+  const [disable2FAToken, setDisable2FAToken] = useState('');
+  const [backupCodes, setBackupCodes] = useState<string[]>([]);
+  const [showBackupCodes, setShowBackupCodes] = useState(false);
+
+  // Active sessions states
+  const [sessions, setSessions] = useState<Session[]>([]);
+  const [isLoadingSessions, setIsLoadingSessions] = useState(false);
+  const [revokeSessionId, setRevokeSessionId] = useState<string | null>(null);
+  const [showRevokeAll, setShowRevokeAll] = useState(false);
+
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Fetch user profile data including avatar
@@ -50,11 +112,16 @@ export default function ProfilePage() {
             setProfileData(prev => ({
               ...prev,
               email: response.data.email,
+              username: response.data.username || '',
               currency: response.data.currency || 'USD',
               country: response.data.country || 'United States',
               monthlyIncome: response.data.monthlyIncome || 5000,
-              riskLevel: response.data.riskLevel || 'medium'
+              riskLevel: response.data.riskLevel || 'medium',
+              createdAt: response.data.createdAt || prev.createdAt,
             }));
+
+            // Check 2FA status
+            setIsTwoFactorEnabled(response.data.isTwoFactorEnabled || false);
 
             // If user has avatar, fetch it
             if (response.data.avatarUrl) {
@@ -91,6 +158,24 @@ export default function ProfilePage() {
     }
   };
 
+  // Load active sessions
+  const loadActiveSessions = async () => {
+    try {
+      setIsLoadingSessions(true);
+      const response = await apiClient.get('/users/sessions');
+      setSessions(response.data);
+    } catch (error: any) {
+      console.error('Failed to load sessions:', error);
+      toast({
+        title: "Error",
+        description: error.response?.data?.message || "Failed to load active sessions",
+        variant: "destructive",
+      });
+    } finally {
+      setIsLoadingSessions(false);
+    }
+  };
+
   // Cleanup
   useEffect(() => {
     return () => {
@@ -117,16 +202,12 @@ export default function ProfilePage() {
   const handleSave = async () => {
     try {
       const response = await apiClient.put('/users/profile', {
+        username: profileData.username,
         currency: profileData.currency,
         country: profileData.country,
         monthlyIncome: profileData.monthlyIncome,
         riskLevel: profileData.riskLevel,
       });
-
-      // Update avatar URL using the helper
-      if (response.data?.id) {
-        setAvatarUrl(getAvatarUrl(response.data.id));
-      }
 
       toast({
         title: "Profile Updated",
@@ -140,6 +221,220 @@ export default function ProfilePage() {
         variant: "destructive",
       });
     }
+  };
+
+  const handleChangePassword = async () => {
+    // Validation
+    if (newPassword !== confirmPassword) {
+      toast({
+        title: "Error",
+        description: "New passwords do not match",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    if (newPassword.length < 8) {
+      toast({
+        title: "Error",
+        description: "Password must be at least 8 characters long",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setIsChangingPassword(true);
+    try {
+      await apiClient.post('/users/change-password', {
+        currentPassword,
+        newPassword,
+        confirmPassword,
+      });
+
+      toast({
+        title: "Success",
+        description: "Password changed successfully",
+      });
+
+      // Reset form
+      setCurrentPassword('');
+      setNewPassword('');
+      setConfirmPassword('');
+      setShowChangePassword(false);
+
+      // Logout user to apply new password
+      toast({
+        title: "Please Re-login",
+        description: "Please login again with your new password",
+      });
+      setTimeout(() => {
+        logout();
+      }, 2000);
+    } catch (error: any) {
+      toast({
+        title: "Error",
+        description: error.response?.data?.message || "Failed to change password",
+        variant: "destructive",
+      });
+    } finally {
+      setIsChangingPassword(false);
+    }
+  };
+
+  const handleSetupTwoFactor = async () => {
+    setIsSettingUp2FA(true);
+    try {
+      const response = await apiClient.post('/users/two-factor/setup');
+      setTwoFactorSetup(response.data);
+      setShowTwoFactorSetup(true);
+
+      // Generate backup codes
+      const codes = Array.from({ length: 10 }, () =>
+        Math.random().toString(36).substring(2, 8).toUpperCase()
+      );
+      setBackupCodes(codes);
+    } catch (error: any) {
+      toast({
+        title: "Error",
+        description: error.response?.data?.message || "Failed to setup two-factor authentication",
+        variant: "destructive",
+      });
+    } finally {
+      setIsSettingUp2FA(false);
+    }
+  };
+
+  const handleVerifyTwoFactor = async () => {
+    if (!twoFactorToken) {
+      toast({
+        title: "Error",
+        description: "Please enter the verification code",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    if (twoFactorToken.length !== 6) {
+      toast({
+        title: "Error",
+        description: "Verification code must be 6 digits",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setIsVerifying2FA(true);
+    try {
+      await apiClient.post('/users/two-factor/verify', { token: twoFactorToken });
+
+      // Fetch updated profile to get 2FA status
+      const profileResponse = await apiClient.get('/users/profile');
+      setIsTwoFactorEnabled(profileResponse.data.isTwoFactorEnabled || true);
+
+      setShowTwoFactorSetup(false);
+      setTwoFactorSetup(null);
+      setTwoFactorToken('');
+      setShowBackupCodes(true);
+
+      toast({
+        title: "Success",
+        description: "Two-factor authentication enabled successfully",
+      });
+    } catch (error: any) {
+      toast({
+        title: "Error",
+        description: error.response?.data?.message || "Invalid verification code",
+        variant: "destructive",
+      });
+    } finally {
+      setIsVerifying2FA(false);
+    }
+  };
+
+  const handleDisableTwoFactor = async () => {
+    if (!disable2FAToken) {
+      toast({
+        title: "Error",
+        description: "Please enter the verification code",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    try {
+      await apiClient.post('/users/two-factor/disable', { token: disable2FAToken });
+      setIsTwoFactorEnabled(false);
+      setShowDisable2FA(false);
+      setDisable2FAToken('');
+
+      toast({
+        title: "Success",
+        description: "Two-factor authentication disabled successfully",
+      });
+    } catch (error: any) {
+      toast({
+        title: "Error",
+        description: error.response?.data?.message || "Invalid verification code",
+        variant: "destructive",
+      });
+    }
+  };
+
+  const handleRevokeSession = async (sessionId: string) => {
+    try {
+      await apiClient.delete(`/users/sessions/${sessionId}`);
+      await loadActiveSessions();
+      toast({
+        title: "Success",
+        description: "Session revoked successfully",
+      });
+    } catch (error: any) {
+      toast({
+        title: "Error",
+        description: error.response?.data?.message || "Failed to revoke session",
+        variant: "destructive",
+      });
+    }
+  };
+
+  const handleRevokeAllSessions = async () => {
+    try {
+      await apiClient.delete('/users/sessions');
+      await loadActiveSessions();
+      setShowRevokeAll(false);
+
+      // Logout current session
+      toast({
+        title: "All Sessions Revoked",
+        description: "Please login again",
+      });
+      setTimeout(() => {
+        logout();
+      }, 2000);
+    } catch (error: any) {
+      toast({
+        title: "Error",
+        description: error.response?.data?.message || "Failed to revoke sessions",
+        variant: "destructive",
+      });
+    }
+  };
+
+  const copyToClipboard = (text: string) => {
+    navigator.clipboard.writeText(text);
+    toast({
+      title: "Copied",
+      description: "Copied to clipboard",
+    });
+  };
+
+  const copyBackupCodes = () => {
+    const codesText = backupCodes.join('\n');
+    navigator.clipboard.writeText(codesText);
+    toast({
+      title: "Copied",
+      description: "All backup codes copied to clipboard",
+    });
   };
 
   const handleAvatarClick = () => {
@@ -180,17 +475,17 @@ export default function ProfilePage() {
         },
       });
 
-      // Update avatar URL using the helper
-      if (response.data?.id) {
-        setAvatarUrl(getAvatarUrl(response.data.id));
-      }
+      // Fetch new avatar after upload
+      await fetchAvatar();
 
       // Update local storage
-      const updatedUser = { ...user, ...response.data };
-      localStorage.setItem('user', JSON.stringify(updatedUser));
-
-      // Refresh token to trigger re-render
-      await refreshToken();
+      if (user) {
+        const updatedUser = {
+          ...user,
+          avatarUrl: response.data?.avatarUrl || null
+        };
+        localStorage.setItem('user', JSON.stringify(updatedUser));
+      }
 
       toast({
         title: "Avatar Updated",
@@ -214,15 +509,14 @@ export default function ProfilePage() {
     try {
       await apiClient.delete('/users/avatar');
 
-      // Clear avatar URL
-      setAvatarUrl(null);
+      // Clear avatar data URL
+      setAvatarDataUrl(null);
 
       // Update local storage
-      const updatedUser = { ...user, avatarUrl: null };
-      localStorage.setItem('user', JSON.stringify(updatedUser));
-
-      // Refresh token to trigger re-render
-      await refreshToken();
+      if (user) {
+        const updatedUser = { ...user, avatarUrl: null };
+        localStorage.setItem('user', JSON.stringify(updatedUser));
+      }
 
       toast({
         title: "Avatar Removed",
@@ -235,12 +529,6 @@ export default function ProfilePage() {
         variant: "destructive",
       });
     }
-  };
-
-  // Handle avatar image loading error
-  const handleAvatarError = () => {
-    console.log('Avatar failed to load, clearing URL');
-    setAvatarUrl(null);
   };
 
   // Show loading or return null if user is not available
@@ -294,28 +582,28 @@ export default function ProfilePage() {
                         onClick={handleAvatarClick}
                         disabled={isUploading}
                       >
-                        <Upload className="h-4 w-4 mr-2" />
+                        <Upload className="h-4 w-4" />
                         {isUploading ? "Uploading..." : "Change Avatar"}
                       </Button>
-                      {avatarUrl && (
+                      {avatarDataUrl && (
                         <Button
                           size="sm"
                           variant="destructive"
                           onClick={handleRemoveAvatar}
                           disabled={isUploading}
                         >
-                          <X className="h-4 w-4 mr-2" />
+                          <X className="h-4 w-4" />
                           Remove
                         </Button>
                       )}
                     </div>
 
                     <CardTitle className="text-xl mt-4">
-                      {user.email?.split("@")[0] || "User"}
+                      {user.username}
                     </CardTitle>
                     <CardDescription>{user.email}</CardDescription>
                     <Badge className="mt-2" variant="secondary">
-                      <Shield className="mr-2 h-3 w-3" />
+                      <User className="h-3 w-3" />
                       {user.role?.charAt(0).toUpperCase() + user.role?.slice(1) || "User"}
                     </Badge>
                   </CardHeader>
@@ -330,9 +618,19 @@ export default function ProfilePage() {
                       <div className="flex items-center justify-between">
                         <span className="text-sm font-medium">Status</span>
                         <Badge variant="outline" className="bg-green-50 text-green-700 border-green-200">
+                          <CheckCircle className="h-3 w-3" />
                           Active
                         </Badge>
                       </div>
+                      {isTwoFactorEnabled && (
+                        <div className="flex items-center justify-between">
+                          <span className="text-sm font-medium">2FA</span>
+                          <Badge variant="outline" className="bg-green-50 text-green-700 border-green-200 flex-inline">
+                            <BadgeCheck className="h-4 w-4" />
+                            Enabled
+                          </Badge>
+                        </div>
+                      )}
                     </div>
                   </CardContent>
                 </Card>
@@ -376,13 +674,13 @@ export default function ProfilePage() {
                       <User className="mr-2 h-4 w-4" />
                       Personal
                     </TabsTrigger>
+                    <TabsTrigger value="security" onClick={loadActiveSessions}>
+                      <Shield className="mr-2 h-4 w-4" />
+                      Security
+                    </TabsTrigger>
                     <TabsTrigger value="financial">
                       <CreditCard className="mr-2 h-4 w-4" />
                       Financial
-                    </TabsTrigger>
-                    <TabsTrigger value="security">
-                      <Shield className="mr-2 h-4 w-4" />
-                      Security
                     </TabsTrigger>
                   </TabsList>
 
@@ -404,12 +702,27 @@ export default function ProfilePage() {
                               <Input
                                 id="email"
                                 value={profileData.email}
-                                disabled={true} // Email cannot be changed
+                                disabled={true}
                                 className="bg-muted"
                               />
                             </div>
                             <p className="text-xs text-muted-foreground">
                               Email address cannot be changed
+                            </p>
+                          </div>
+                          <div className="space-y-2">
+                            <Label htmlFor="username">Username</Label>
+                            <div className="flex items-center gap-2">
+                              <UserIcon className="h-4 w-4 text-muted-foreground" />
+                              <Input
+                                id="username"
+                                value={profileData.username}
+                                disabled={!isEditing}
+                                onChange={(e) => setProfileData({ ...profileData, username: e.target.value })}
+                              />
+                            </div>
+                            <p className="text-xs text-muted-foreground">
+                              Your unique username
                             </p>
                           </div>
                           <div className="space-y-2">
@@ -467,6 +780,436 @@ export default function ProfilePage() {
                             <div className="h-4 w-4 rounded-full bg-muted-foreground"></div>
                           </div>
                         </div>
+                      </CardContent>
+                    </Card>
+                  </TabsContent>
+
+                  {/* Security Tab */}
+                  <TabsContent value="security" className="space-y-6">
+                    {/* Change Password Card */}
+                    <Card>
+                      <CardHeader>
+                        <CardTitle>Change Password</CardTitle>
+                        <CardDescription>
+                          Update your password to keep your account secure
+                        </CardDescription>
+                      </CardHeader>
+                      <CardContent className="space-y-4">
+                        <div className="flex items-center justify-between">
+                          <div>
+                            <p className="font-medium">Password Security</p>
+                            <p className="text-sm text-muted-foreground">
+                              Keep your password strong and unique
+                            </p>
+                          </div>
+                          <Dialog open={showChangePassword} onOpenChange={setShowChangePassword}>
+                            <DialogTrigger asChild>
+                              <Button variant="outline" size="sm">
+                                <Key className="mr-2 h-4 w-4" />
+                                Change Password
+                              </Button>
+                            </DialogTrigger>
+                            <DialogContent className="sm:max-w-md">
+                              <DialogHeader>
+                                <DialogTitle>Change Password</DialogTitle>
+                                <DialogDescription>
+                                  Enter your current password and new password
+                                </DialogDescription>
+                              </DialogHeader>
+                              <div className="space-y-4">
+                                <div className="space-y-2">
+                                  <Label htmlFor="current-password">Current Password</Label>
+                                  <div className="relative">
+                                    <Input
+                                      id="current-password"
+                                      type={showCurrentPassword ? "text" : "password"}
+                                      value={currentPassword}
+                                      onChange={(e) => setCurrentPassword(e.target.value)}
+                                      disabled={isChangingPassword}
+                                    />
+                                    <Button
+                                      type="button"
+                                      variant="ghost"
+                                      size="sm"
+                                      className="absolute right-2 top-1/2 -translate-y-1/2 h-7 w-7 p-0"
+                                      onClick={() => setShowCurrentPassword(!showCurrentPassword)}
+                                    >
+                                      {showCurrentPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                                    </Button>
+                                  </div>
+                                </div>
+                                <div className="space-y-2">
+                                  <Label htmlFor="new-password">New Password</Label>
+                                  <div className="relative">
+                                    <Input
+                                      id="new-password"
+                                      type={showNewPassword ? "text" : "password"}
+                                      value={newPassword}
+                                      onChange={(e) => setNewPassword(e.target.value)}
+                                      disabled={isChangingPassword}
+                                    />
+                                    <Button
+                                      type="button"
+                                      variant="ghost"
+                                      size="sm"
+                                      className="absolute right-2 top-1/2 -translate-y-1/2 h-7 w-7 p-0"
+                                      onClick={() => setShowNewPassword(!showNewPassword)}
+                                    >
+                                      {showNewPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                                    </Button>
+                                  </div>
+                                  <p className="text-xs text-muted-foreground">
+                                    Must be at least 8 characters long
+                                  </p>
+                                </div>
+                                <div className="space-y-2">
+                                  <Label htmlFor="confirm-password">Confirm New Password</Label>
+                                  <div className="relative">
+                                    <Input
+                                      id="confirm-password"
+                                      type={showConfirmPassword ? "text" : "password"}
+                                      value={confirmPassword}
+                                      onChange={(e) => setConfirmPassword(e.target.value)}
+                                      disabled={isChangingPassword}
+                                    />
+                                    <Button
+                                      type="button"
+                                      variant="ghost"
+                                      size="sm"
+                                      className="absolute right-2 top-1/2 -translate-y-1/2 h-7 w-7 p-0"
+                                      onClick={() => setShowConfirmPassword(!showConfirmPassword)}
+                                    >
+                                      {showConfirmPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                                    </Button>
+                                  </div>
+                                </div>
+                              </div>
+                              <DialogFooter>
+                                <Button
+                                  variant="outline"
+                                  onClick={() => setShowChangePassword(false)}
+                                  disabled={isChangingPassword}
+                                >
+                                  Cancel
+                                </Button>
+                                <Button
+                                  onClick={handleChangePassword}
+                                  disabled={isChangingPassword || !currentPassword || !newPassword || !confirmPassword}
+                                >
+                                  {isChangingPassword ? "Changing..." : "Change Password"}
+                                </Button>
+                              </DialogFooter>
+                            </DialogContent>
+                          </Dialog>
+                        </div>
+                      </CardContent>
+                    </Card>
+
+                    {/* Two-Factor Authentication Card */}
+                    <Card>
+                      <CardHeader>
+                        <CardTitle>Two-Factor Authentication</CardTitle>
+                        <CardDescription>
+                          Add an extra layer of security to your account
+                        </CardDescription>
+                      </CardHeader>
+                      <CardContent className="space-y-4">
+                        <div className="flex items-center justify-between">
+                          <div>
+                            <p className="font-medium">2FA Status</p>
+                            <p className="text-sm text-muted-foreground">
+                              {isTwoFactorEnabled ? (
+                                <span className="text-green-600 flex items-center gap-1">
+                                  <BadgeCheck className="h-4 w-4" /> Enabled
+                                </span>
+                              ) : (
+                                "Not enabled"
+                              )}
+                            </p>
+                          </div>
+                          {isTwoFactorEnabled ? (
+                            <AlertDialog open={showDisable2FA} onOpenChange={setShowDisable2FA}>
+                              <AlertDialogTrigger asChild>
+                                <Button variant="outline" size="sm">
+                                  Disable 2FA
+                                </Button>
+                              </AlertDialogTrigger>
+                              <AlertDialogContent>
+                                <AlertDialogHeader>
+                                  <AlertDialogTitle>Disable Two-Factor Authentication</AlertDialogTitle>
+                                  <AlertDialogDescription>
+                                    Enter the verification code from your authenticator app to disable 2FA.
+                                  </AlertDialogDescription>
+                                </AlertDialogHeader>
+                                <div className="space-y-4">
+                                  <div className="space-y-2">
+                                    <Label htmlFor="disable-2fa-token">Verification Code</Label>
+                                    <Input
+                                      id="disable-2fa-token"
+                                      value={disable2FAToken}
+                                      onChange={(e) => setDisable2FAToken(e.target.value)}
+                                      placeholder="Enter 6-digit code"
+                                      maxLength={6}
+                                    />
+                                  </div>
+                                </div>
+                                <AlertDialogFooter>
+                                  <AlertDialogCancel>Cancel</AlertDialogCancel>
+                                  <AlertDialogAction onClick={handleDisableTwoFactor}>
+                                    Disable 2FA
+                                  </AlertDialogAction>
+                                </AlertDialogFooter>
+                              </AlertDialogContent>
+                            </AlertDialog>
+                          ) : (
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={handleSetupTwoFactor}
+                              disabled={isSettingUp2FA}
+                            >
+                              <Smartphone className="mr-2 h-4 w-4" />
+                              {isSettingUp2FA ? "Setting up..." : "Enable 2FA"}
+                            </Button>
+                          )}
+                        </div>
+                      </CardContent>
+                    </Card>
+
+                    {/* Two-Factor Setup Dialog */}
+                    <Dialog open={showTwoFactorSetup} onOpenChange={setShowTwoFactorSetup}>
+                      <DialogContent className="sm:max-w-md">
+                        <DialogHeader>
+                          <DialogTitle>Setup Two-Factor Authentication</DialogTitle>
+                          <DialogDescription>
+                            Scan the QR code with your authenticator app
+                          </DialogDescription>
+                        </DialogHeader>
+                        {twoFactorSetup && (
+                          <div className="space-y-4">
+                            <div className="flex flex-col items-center space-y-4">
+                              <img
+                                src={twoFactorSetup.qrCodeUrl}
+                                alt="QR Code"
+                                className="h-48 w-48 border rounded-lg"
+                              />
+                              <div className="text-center space-y-2">
+                                <p className="text-sm font-medium">Or enter this code manually:</p>
+                                <div className="flex items-center justify-center gap-2">
+                                  <code className="bg-muted px-3 py-1 rounded-md text-sm font-mono">
+                                    {twoFactorSetup.secret}
+                                  </code>
+                                  <Button
+                                    type="button"
+                                    variant="ghost"
+                                    size="sm"
+                                    onClick={() => copyToClipboard(twoFactorSetup.secret)}
+                                  >
+                                    <Copy className="h-4 w-4" />
+                                  </Button>
+                                </div>
+                              </div>
+                            </div>
+                            <div className="space-y-2">
+                              <Label htmlFor="2fa-token">Verification Code</Label>
+                              <Input
+                                id="2fa-token"
+                                value={twoFactorToken}
+                                onChange={(e) => setTwoFactorToken(e.target.value)}
+                                placeholder="Enter 6-digit code"
+                                maxLength={6}
+                                className="text-center text-lg tracking-widest"
+                              />
+                            </div>
+                          </div>
+                        )}
+                        <DialogFooter>
+                          <Button
+                            variant="outline"
+                            onClick={() => {
+                              setShowTwoFactorSetup(false);
+                              setTwoFactorSetup(null);
+                            }}
+                          >
+                            Cancel
+                          </Button>
+                          <Button
+                            onClick={handleVerifyTwoFactor}
+                            disabled={!twoFactorToken || twoFactorToken.length !== 6 || isVerifying2FA}
+                          >
+                            {isVerifying2FA ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+                            {isVerifying2FA ? "Verifying..." : "Verify & Enable"}
+                          </Button>
+                        </DialogFooter>
+                      </DialogContent>
+                    </Dialog>
+
+                    {/* Backup Codes Dialog */}
+                    <Dialog open={showBackupCodes} onOpenChange={setShowBackupCodes}>
+                      <DialogContent className="sm:max-w-md">
+                        <DialogHeader>
+                          <DialogTitle>Save Your Backup Codes</DialogTitle>
+                          <DialogDescription>
+                            Save these codes in a safe place. Each code can be used only once.
+                          </DialogDescription>
+                        </DialogHeader>
+                        <div className="space-y-4">
+                          <div className="bg-muted p-4 rounded-lg">
+                            <div className="grid grid-cols-2 gap-2">
+                              {backupCodes.map((code, index) => (
+                                <div
+                                  key={index}
+                                  className="text-center font-mono text-sm p-2 bg-background rounded"
+                                >
+                                  {code}
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                          <div className="flex items-center justify-between">
+                            <Button
+                              variant="outline"
+                              onClick={copyBackupCodes}
+                              size="sm"
+                            >
+                              <Copy className="mr-2 h-4 w-4" />
+                              Copy All
+                            </Button>
+                            <Button
+                              variant="outline"
+                              onClick={() => {
+                                const text = backupCodes.join('\n');
+                                const blob = new Blob([text], { type: 'text/plain' });
+                                const url = URL.createObjectURL(blob);
+                                const a = document.createElement('a');
+                                a.href = url;
+                                a.download = 'backup-codes.txt';
+                                a.click();
+                                URL.revokeObjectURL(url);
+                              }}
+                              size="sm"
+                            >
+                              Download
+                            </Button>
+                          </div>
+                          <div className="flex items-start gap-2 text-sm text-yellow-600 bg-yellow-50 p-3 rounded-lg">
+                            <AlertCircle className="h-4 w-4 mt-0.5 flex-shrink-0" />
+                            <p>
+                              These codes are only shown once. Store them securely!
+                            </p>
+                          </div>
+                        </div>
+                        <DialogFooter>
+                          <Button onClick={() => setShowBackupCodes(false)}>
+                            I've Saved These Codes
+                          </Button>
+                        </DialogFooter>
+                      </DialogContent>
+                    </Dialog>
+
+                    {/* Active Sessions Card */}
+                    <Card>
+                      <CardHeader>
+                        <div className="flex items-center justify-between">
+                          <div>
+                            <CardTitle>Active Sessions</CardTitle>
+                            <CardDescription>
+                              Manage your active login sessions
+                            </CardDescription>
+                          </div>
+                          <AlertDialog open={showRevokeAll} onOpenChange={setShowRevokeAll}>
+                            <AlertDialogTrigger asChild>
+                              <Button variant="outline" size="sm">
+                                <LogOut className="mr-2 h-4 w-4" />
+                                Revoke All
+                              </Button>
+                            </AlertDialogTrigger>
+                            <AlertDialogContent>
+                              <AlertDialogHeader>
+                                <AlertDialogTitle>Revoke All Sessions</AlertDialogTitle>
+                                <AlertDialogDescription>
+                                  This will log you out from all devices. You will need to login again.
+                                </AlertDialogDescription>
+                              </AlertDialogHeader>
+                              <AlertDialogFooter>
+                                <AlertDialogCancel>Cancel</AlertDialogCancel>
+                                <AlertDialogAction onClick={handleRevokeAllSessions}>
+                                  Revoke All
+                                </AlertDialogAction>
+                              </AlertDialogFooter>
+                            </AlertDialogContent>
+                          </AlertDialog>
+                        </div>
+                      </CardHeader>
+                      <CardContent>
+                        {isLoadingSessions ? (
+                          <div className="flex justify-center py-8">
+                            <Loader2 className="h-8 w-8 animate-spin text-primary" />
+                          </div>
+                        ) : sessions.length === 0 ? (
+                          <div className="text-center py-8 text-muted-foreground">
+                            <Monitor className="h-12 w-12 mx-auto mb-4 opacity-50" />
+                            <p>No active sessions found</p>
+                          </div>
+                        ) : (
+                          <div className="space-y-4">
+                            {sessions.map((session) => (
+                              <div
+                                key={session.id}
+                                className="flex items-center justify-between p-4 border rounded-lg hover:bg-muted/50 transition-colors"
+                              >
+                                <div className="flex items-center gap-3">
+                                  <div className="p-2 bg-muted rounded-md">
+                                    <Monitor className="h-4 w-4" />
+                                  </div>
+                                  <div>
+                                    <p className="font-medium">{session.device}</p>
+                                    <p className="text-sm text-muted-foreground">
+                                      {session.browser} • {session.location} •{" "}
+                                      {format(new Date(session.lastActive), "MMM d, h:mm a")}
+                                    </p>
+                                  </div>
+                                </div>
+                                <div className="flex items-center gap-2">
+                                  {session.current && (
+                                    <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-200">
+                                      Current
+                                    </Badge>
+                                  )}
+                                  {!session.current && (
+                                    <AlertDialog>
+                                      <AlertDialogTrigger asChild>
+                                        <Button
+                                          variant="ghost"
+                                          size="sm"
+                                          onClick={() => setRevokeSessionId(session.id)}
+                                        >
+                                          Revoke
+                                        </Button>
+                                      </AlertDialogTrigger>
+                                      <AlertDialogContent>
+                                        <AlertDialogHeader>
+                                          <AlertDialogTitle>Revoke Session</AlertDialogTitle>
+                                          <AlertDialogDescription>
+                                            This will log out this device immediately.
+                                          </AlertDialogDescription>
+                                        </AlertDialogHeader>
+                                        <AlertDialogFooter>
+                                          <AlertDialogCancel>Cancel</AlertDialogCancel>
+                                          <AlertDialogAction
+                                            onClick={() => handleRevokeSession(session.id)}
+                                          >
+                                            Revoke
+                                          </AlertDialogAction>
+                                        </AlertDialogFooter>
+                                      </AlertDialogContent>
+                                    </AlertDialog>
+                                  )}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
                       </CardContent>
                     </Card>
                   </TabsContent>
@@ -537,81 +1280,6 @@ export default function ProfilePage() {
                           Save Financial Settings
                         </Button>
                       </CardFooter>
-                    </Card>
-                  </TabsContent>
-
-                  {/* Security Tab */}
-                  <TabsContent value="security" className="space-y-6">
-                    <Card>
-                      <CardHeader>
-                        <CardTitle>Security Settings</CardTitle>
-                        <CardDescription>
-                          Manage your account security and privacy
-                        </CardDescription>
-                      </CardHeader>
-                      <CardContent className="space-y-4">
-                        <div className="space-y-4">
-                          <div className="flex items-center justify-between">
-                            <div>
-                              <p className="font-medium">Two-Factor Authentication</p>
-                              <p className="text-sm text-muted-foreground">
-                                Add an extra layer of security to your account
-                              </p>
-                            </div>
-                            <Button variant="outline" size="sm">
-                              Enable
-                            </Button>
-                          </div>
-                          <Separator />
-                          <div className="flex items-center justify-between">
-                            <div>
-                              <p className="font-medium">Change Password</p>
-                              <p className="text-sm text-muted-foreground">
-                                Update your password regularly
-                              </p>
-                            </div>
-                            <Button variant="outline" size="sm">
-                              Change
-                            </Button>
-                          </div>
-                          <Separator />
-                          <div className="flex items-center justify-between">
-                            <div>
-                              <p className="font-medium">Active Sessions</p>
-                              <p className="text-sm text-muted-foreground">
-                                Manage your active login sessions
-                              </p>
-                            </div>
-                            <Button variant="outline" size="sm">
-                              View All
-                            </Button>
-                          </div>
-                        </div>
-                      </CardContent>
-                    </Card>
-
-                    <Card className="border-destructive/20 bg-destructive/5">
-                      <CardHeader>
-                        <CardTitle className="text-destructive">Danger Zone</CardTitle>
-                        <CardDescription>
-                          Irreversible and destructive actions
-                        </CardDescription>
-                      </CardHeader>
-                      <CardContent>
-                        <div className="space-y-4">
-                          <div className="flex items-center justify-between">
-                            <div>
-                              <p className="font-medium">Delete Account</p>
-                              <p className="text-sm text-muted-foreground">
-                                Permanently delete your account and all data
-                              </p>
-                            </div>
-                            <Button variant="destructive" size="sm">
-                              Delete Account
-                            </Button>
-                          </div>
-                        </div>
-                      </CardContent>
                     </Card>
                   </TabsContent>
                 </Tabs>

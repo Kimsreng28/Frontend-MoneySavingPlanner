@@ -15,10 +15,12 @@ export interface AuthResponse {
     id: string;
     email: string;
     role: string;
+    username: string;
   };
 }
 
 export interface SignupCredentials {
+  username: string;
   email: string;
   password: string;
 }
@@ -26,6 +28,7 @@ export interface SignupCredentials {
 export interface User {
   id: string;
   email: string;
+  username: string;
   role: string;
   isActive: boolean;
   createdAt: string;

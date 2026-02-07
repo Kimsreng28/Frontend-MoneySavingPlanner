@@ -6,9 +6,11 @@ import { authService, LoginCredentials, SignupCredentials, User as ApiUser, Auth
 interface AuthUser {
     id: string;
     email: string;
+    username: string;
     role: string;
     avatarUrl?: string;
     createdAt?: string;
+    isTwoFactorEnabled?: boolean;
 }
 
 interface AuthContextType {
@@ -18,6 +20,7 @@ interface AuthContextType {
     signup: (credentials: SignupCredentials) => Promise<void>;
     logout: () => Promise<void>;
     refreshToken: () => Promise<void>;
+    updateUser: (userData: Partial<AuthUser>) => void;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -185,8 +188,16 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         }
     };
 
+    const updateUser = (userData: Partial<AuthUser>) => {
+        if (user) {
+            const updatedUser = { ...user, ...userData };
+            setUser(updatedUser);
+            localStorage.setItem('user', JSON.stringify(updatedUser));
+        }
+    };
+
     return (
-        <AuthContext.Provider value={{ user, isLoading, login, signup, logout, refreshToken }}>
+        <AuthContext.Provider value={{ user, isLoading, login, signup, logout, refreshToken, updateUser }}>
             {children}
         </AuthContext.Provider>
     );

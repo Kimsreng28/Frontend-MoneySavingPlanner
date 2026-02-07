@@ -129,7 +129,7 @@ export function NavUser() {
               </Avatar>
               <div className="grid flex-1 text-left text-sm leading-tight">
                 <span className="truncate font-medium">
-                  {user?.email?.split("@")[0] || "User"}
+                  {user?.username || "User"}
                 </span>
                 <span className="truncate text-xs">
                   {user?.email || "user@example.com"}
@@ -160,7 +160,7 @@ export function NavUser() {
                 </Avatar>
                 <div className="grid flex-1 text-left text-sm leading-tight">
                   <span className="truncate font-medium">
-                    {user?.email?.split("@")[0] || "User"}
+                    {user?.username || "User"}
                   </span>
                   <span className="truncate text-xs">
                     {user?.email || "user@example.com"}
@@ -179,17 +179,9 @@ export function NavUser() {
                 <User className="mr-2 h-4 w-4" />
                 Profile
               </DropdownMenuItem>
-              <DropdownMenuItem>
-                <Sparkles className="mr-2 h-4 w-4" />
-                Upgrade to Pro
-              </DropdownMenuItem>
             </DropdownMenuGroup>
             <DropdownMenuSeparator />
             <DropdownMenuGroup>
-              <DropdownMenuItem>
-                <BadgeCheck className="mr-2 h-4 w-4" />
-                Account
-              </DropdownMenuItem>
               {/* Theme dropdown menu */}
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>

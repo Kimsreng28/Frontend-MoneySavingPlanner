@@ -76,3 +76,27 @@ export interface UpdatePlanDto {
   category?: string;
   color?: string;
 }
+
+export enum TransactionType {
+  SAVED = "saved",
+  MISSED = "missed",
+  EXTRA = "extra",
+  PARTIAL = "partial",
+  WITHDRAWAL = "withdrawal",
+}
+
+export interface CreateTransactionDto {
+  planId: string;
+  amount: number;
+  type: TransactionType;
+  transactionDate: string;
+  note?: string;
+  isManual?: boolean;
+  isCatchUp?: boolean;
+}
+
+export enum ExportFormat {
+  CSV = "csv",
+  PDF = "pdf",
+  EXCEL = "excel",
+}

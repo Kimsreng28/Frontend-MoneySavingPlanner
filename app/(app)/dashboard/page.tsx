@@ -36,7 +36,7 @@ export default function Page() {
         <SidebarInset>
           {/* Header */}
           <Header
-            title={`${greeting()}, KIM!`}
+            title={`${greeting()}`}
             subtitle="Here's your savings overview for today"
           />
 

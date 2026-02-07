@@ -1,4 +1,4 @@
-import { GalleryVerticalEnd } from "lucide-react"
+import { Command, GalleryVerticalEnd } from "lucide-react"
 
 import { SignupForm } from "@/components/signup-form"
 
@@ -9,7 +9,7 @@ export default function SignupPage() {
         <div className="flex justify-center gap-2 md:justify-start">
           <a href="#" className="flex items-center gap-2 font-medium">
             <div className="bg-primary text-primary-foreground flex size-6 items-center justify-center rounded-md">
-              <GalleryVerticalEnd className="size-4" />
+              <Command className="size-4" />
             </div>
             Save Wise
           </a>

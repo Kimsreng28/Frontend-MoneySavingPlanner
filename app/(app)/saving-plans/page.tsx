@@ -5,7 +5,6 @@ import {
     Plus,
     Search,
     Filter,
-    Download,
     MoreVertical,
     Target,
     TrendingUp,
@@ -14,7 +13,10 @@ import {
     PieChart,
     Edit,
     Trash2,
-    DollarSign
+    DollarSign,
+    AlertCircle,
+    Loader2,
+    Eye
 } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
 import { useToast } from "@/hooks/use-toast";
@@ -48,24 +50,50 @@ import {
     DialogFooter,
     DialogHeader,
     DialogTitle,
-    DialogTrigger,
 } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
-import { CreatePlanDto, DashboardData, SavingFrequency, SavingPlan } from "@/types/saving-plans";
+import { Textarea } from "@/components/ui/textarea";
+import { CreatePlanDto, DashboardData, SavingFrequency, SavingPlan, TransactionType } from "@/types/saving-plans";
+import { AddTransactionDialog, TransactionFormData } from "@/components/transactions/AddTransactionDialog";
+import Link from "next/link";
+
+// Helper function to ensure proper number formatting
+const ensureNumber = (value: any): number => {
+    if (value === null || value === undefined) return 0;
+    const num = parseFloat(value);
+    return isNaN(num) ? 0 : parseFloat(num.toFixed(2));
+};
 
 export default function SavingPlansPage() {
-    const { user } = useAuth();
+    const { user, refreshToken } = useAuth();
     const { toast } = useToast();
+
+    // States
     const [isLoading, setIsLoading] = useState(true);
     const [plans, setPlans] = useState<SavingPlan[]>([]);
     const [dashboardData, setDashboardData] = useState<DashboardData | null>(null);
     const [searchQuery, setSearchQuery] = useState("");
     const [filterStatus, setFilterStatus] = useState<string>("all");
+
+    // Dialog states
     const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
     const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
+    const [isAddSavingsDialogOpen, setIsAddSavingsDialogOpen] = useState(false);
+    const [isUpdateAmountDialogOpen, setIsUpdateAmountDialogOpen] = useState(false);
+
+    // Selected plan for operations
     const [selectedPlan, setSelectedPlan] = useState<SavingPlan | null>(null);
+    const [isProcessing, setIsProcessing] = useState(false);
+
+    // Form states
+    const [addSavingsAmount, setAddSavingsAmount] = useState<number>(0);
+    const [addSavingsNote, setAddSavingsNote] = useState<string>("");
+    const [updateAmountValue, setUpdateAmountValue] = useState<number>(0);
+
+    // Transaction states
+    const [isAddTransactionDialogOpen, setIsAddTransactionDialogOpen] = useState(false);
 
     const [newPlan, setNewPlan] = useState<CreatePlanDto>({
         name: "",
@@ -74,8 +102,6 @@ export default function SavingPlansPage() {
         startDate: new Date().toISOString().split('T')[0],
         frequency: "MONTHLY",
         amountPerPeriod: 100,
-        category: "general",
-        color: "#3b82f6",
     });
 
     const [editPlan, setEditPlan] = useState<Partial<SavingPlan>>({
@@ -83,13 +109,12 @@ export default function SavingPlansPage() {
         description: "",
         targetAmount: 0,
         amountPerPeriod: 0,
-        category: "general",
-        color: "#3b82f6",
         isActive: true,
         isCompleted: false,
     });
 
-    // Fetch saving plans
+    // ========== API FUNCTIONS ==========
+
     const fetchPlans = async () => {
         try {
             setIsLoading(true);
@@ -101,43 +126,85 @@ export default function SavingPlansPage() {
             setPlans(plansResponse.data);
             setDashboardData(dashboardResponse.data);
         } catch (error: any) {
-            toast({
-                title: "Error",
-                description: "Failed to fetch saving plans",
-                variant: "destructive",
-            });
-            console.error("Error fetching plans:", error);
+            if (error.response?.status === 401) {
+                // Token expired, try to refresh
+                try {
+                    await refreshToken();
+                    // Retry the request
+                    const [plansResponse, dashboardResponse] = await Promise.all([
+                        apiClient.get('/saving-plans'),
+                        apiClient.get('/saving-plans/dashboard')
+                    ]);
+                    setPlans(plansResponse.data);
+                    setDashboardData(dashboardResponse.data);
+                } catch (refreshError) {
+                    toast({
+                        title: "Session Expired",
+                        description: "Please login again",
+                        variant: "destructive",
+                    });
+                }
+            } else {
+                toast({
+                    title: "Error",
+                    description: "Failed to fetch saving plans",
+                    variant: "destructive",
+                });
+            }
         } finally {
             setIsLoading(false);
         }
     };
 
-    useEffect(() => {
-        if (user) {
-            fetchPlans();
-        }
-    }, [user]);
-
-    // Handle create plan
-    const handleCreatePlan = async () => {
+    const createTransaction = async (plan: SavingPlan, amount: number, note: string = "") => {
         try {
-            // Validate required fields
-            if (!newPlan.name.trim() || newPlan.targetAmount <= 0 || newPlan.amountPerPeriod <= 0) {
-                toast({
-                    title: "Validation Error",
-                    description: "Please fill in all required fields with valid values",
-                    variant: "destructive",
+            const transactionData = {
+                planId: plan.id,
+                amount: ensureNumber(amount),
+                type: TransactionType.SAVED,
+                transactionDate: new Date().toISOString(),
+                note: note || `Added savings to ${plan.name}`,
+                isManual: true,
+                isCatchUp: false,
+            };
+
+            await apiClient.post('/saving-transactions', transactionData);
+            return true;
+        } catch (error: any) {
+            console.error('Failed to create transaction:', error);
+
+            if (error.response) {
+                console.error('Transaction error details:', {
+                    status: error.response.status,
+                    data: error.response.data,
+                    config: error.response.config
                 });
-                return;
             }
 
-            // Convert frequency to lowercase to match backend enum
+            return false;
+        }
+    };
+
+    // ========== EVENT HANDLERS ==========
+
+    const handleCreatePlan = async () => {
+        if (!newPlan.name.trim() || newPlan.targetAmount <= 0 || newPlan.amountPerPeriod <= 0) {
+            toast({
+                title: "Validation Error",
+                description: "Please fill in all required fields with valid values",
+                variant: "destructive",
+            });
+            return;
+        }
+
+        setIsProcessing(true);
+        try {
             const payload = {
                 ...newPlan,
                 frequency: newPlan.frequency.toLowerCase()
             };
 
-            const response = await apiClient.post('/saving-plans', payload);
+            await apiClient.post('/saving-plans', payload);
 
             toast({
                 title: "Success",
@@ -146,56 +213,168 @@ export default function SavingPlansPage() {
 
             setIsCreateDialogOpen(false);
             resetNewPlanForm();
-            fetchPlans(); // Refresh the list
+            fetchPlans();
         } catch (error: any) {
-            toast({
-                title: "Error",
-                description: error.response?.data?.message || "Failed to create saving plan",
-                variant: "destructive",
-            });
+            if (error.response?.status === 401) {
+                try {
+                    await refreshToken();
+                    const payload = {
+                        ...newPlan,
+                        frequency: newPlan.frequency.toLowerCase()
+                    };
+                    await apiClient.post('/saving-plans', payload);
+                    toast({
+                        title: "Success",
+                        description: "Saving plan created successfully",
+                    });
+                    setIsCreateDialogOpen(false);
+                    resetNewPlanForm();
+                    fetchPlans();
+                } catch (refreshError) {
+                    toast({
+                        title: "Session Expired",
+                        description: "Please login again",
+                        variant: "destructive",
+                    });
+                }
+            } else {
+                toast({
+                    title: "Error",
+                    description: error.response?.data?.message || "Failed to create saving plan",
+                    variant: "destructive",
+                });
+            }
+        } finally {
+            setIsProcessing(false);
         }
     };
 
-    // Handle update plan
+    const handleAddTransaction = async (transactionData: TransactionFormData) => {
+        if (!selectedPlan) return;
+
+        setIsProcessing(true);
+        try {
+            const transactionPayload = {
+                planId: selectedPlan.id,
+                amount: ensureNumber(transactionData.amount),
+                type: transactionData.type,
+                transactionDate: transactionData.transactionDate,
+                note: transactionData.note,
+                isManual: true,
+                isCatchUp: transactionData.isCatchUp,
+            };
+
+            const response = await apiClient.post('/saving-transactions', transactionPayload);
+
+            toast({
+                title: "Success",
+                description: `Transaction recorded successfully`,
+            });
+
+            fetchPlans();
+            setIsAddTransactionDialogOpen(false);
+
+        } catch (error: any) {
+            console.error('Transaction error:', error.response?.data);
+
+            // Handle duplicate transaction error specifically
+            if (error.response?.data?.message?.includes('already exists for this date')) {
+                toast({
+                    title: "Duplicate Transaction",
+                    description: "You've already recorded a transaction of this type for today. Try a different type or date.",
+                    variant: "destructive",
+                });
+            } else if (error.response?.data?.message?.includes('Insufficient funds')) {
+                toast({
+                    title: "Insufficient Funds",
+                    description: error.response?.data?.message,
+                    variant: "destructive",
+                });
+            } else {
+                toast({
+                    title: "Error",
+                    description: error.response?.data?.message || "Failed to record transaction",
+                    variant: "destructive",
+                });
+            }
+        } finally {
+            setIsProcessing(false);
+        }
+    };
+
+    const handleUpdateAmount = async () => {
+        if (!selectedPlan || updateAmountValue < 0) {
+            toast({
+                title: "Error",
+                description: "Please enter a valid amount",
+                variant: "destructive",
+            });
+            return;
+        }
+
+        setIsProcessing(true);
+        try {
+            await apiClient.patch(`/saving-plans/${selectedPlan.id}/amount`, {
+                amount: ensureNumber(updateAmountValue)
+            }).catch(async (error) => {
+                if (error.response?.status === 401) {
+                    await refreshToken();
+                    return apiClient.patch(`/saving-plans/${selectedPlan.id}/amount`, {
+                        amount: ensureNumber(updateAmountValue)
+                    });
+                }
+                throw error;
+            });
+
+            toast({
+                title: "Success",
+                description: `Amount updated to $${updateAmountValue.toFixed(2)}`,
+            });
+
+            // Reset and refresh
+            setUpdateAmountValue(0);
+            setIsUpdateAmountDialogOpen(false);
+            // Force refresh plans
+            await fetchPlans();
+        } catch (error: any) {
+            console.error('Update amount error:', error);
+            if (error.response?.status === 401) {
+                toast({
+                    title: "Session Expired",
+                    description: "Please login again",
+                    variant: "destructive",
+                });
+            } else {
+                toast({
+                    title: "Error",
+                    description: error.response?.data?.message || "Failed to update amount",
+                    variant: "destructive",
+                });
+            }
+        } finally {
+            setIsProcessing(false);
+        }
+    };
+
     const handleUpdatePlan = async () => {
         if (!selectedPlan) return;
 
+        setIsProcessing(true);
         try {
-            // Prepare update payload with lowercase frequency
             const updates: any = { ...editPlan };
 
-            // Always convert frequency to lowercase
             if (updates.frequency) {
                 updates.frequency = updates.frequency.toLowerCase();
             }
 
-            // If plan was completed and we're changing it to not completed,
-            // we need to send both isCompleted and isActive
-            if (selectedPlan.isCompleted && updates.isCompleted === false) {
-                updates.isCompleted = false;
-                updates.isActive = true;
-                updates.completedAt = null;
-            }
-
-            // If plan was not completed and we're marking it as completed
-            if (!selectedPlan.isCompleted && updates.isCompleted === true) {
-                updates.isCompleted = true;
-                updates.isActive = false;
-                // Don't send completedAt, let backend set it
-            }
-
-            // If only changing isActive without touching isCompleted
-            if (updates.isActive !== undefined && updates.isCompleted === undefined) {
-                if (selectedPlan.isCompleted && updates.isActive === true) {
-                    // Changing a completed plan back to active
-                    updates.isCompleted = false;
-                    updates.completedAt = null;
-                }
-            }
-
-            console.log('Sending update payload:', updates); // For debugging
-
-            await apiClient.patch(`/saving-plans/${selectedPlan.id}`, updates);
+            await apiClient.patch(`/saving-plans/${selectedPlan.id}`, updates)
+                .catch(async (error) => {
+                    if (error.response?.status === 401) {
+                        await refreshToken();
+                        return apiClient.patch(`/saving-plans/${selectedPlan.id}`, updates);
+                    }
+                    throw error;
+                });
 
             toast({
                 title: "Success",
@@ -203,126 +382,86 @@ export default function SavingPlansPage() {
             });
 
             setIsEditDialogOpen(false);
-            fetchPlans(); // Refresh the list
+            fetchPlans();
         } catch (error: any) {
-            const errorMessage = error.response?.data?.message || "Failed to update saving plan";
-            toast({
-                title: "Error",
-                description: errorMessage,
-                variant: "destructive",
-            });
-            console.error('Update error:', error);
+            if (error.response?.status === 401) {
+                toast({
+                    title: "Session Expired",
+                    description: "Please login again",
+                    variant: "destructive",
+                });
+            } else {
+                toast({
+                    title: "Error",
+                    description: error.response?.data?.message || "Failed to update plan",
+                    variant: "destructive",
+                });
+            }
+        } finally {
+            setIsProcessing(false);
         }
     };
 
-    // Handle delete plan
     const handleDeletePlan = async (id: string, planName: string) => {
-        if (!confirm(`Are you sure you want to delete "${planName}"? This action cannot be undone.`)) {
-            return;
-        }
+        if (!confirm(`Delete "${planName}"? This action cannot be undone.`)) return;
 
         try {
-            await apiClient.delete(`/saving-plans/${id}`);
+            await apiClient.delete(`/saving-plans/${id}`)
+                .catch(async (error) => {
+                    if (error.response?.status === 401) {
+                        await refreshToken();
+                        return apiClient.delete(`/saving-plans/${id}`);
+                    }
+                    throw error;
+                });
 
             toast({
                 title: "Success",
-                description: "Saving plan deleted successfully",
+                description: "Plan deleted successfully",
             });
-
-            fetchPlans(); // Refresh the list
+            fetchPlans();
         } catch (error: any) {
-            const errorMessage = error.response?.data?.message || "Failed to delete saving plan";
-            toast({
-                title: "Error",
-                description: errorMessage,
-                variant: "destructive",
-            });
-
-            // Handle different error scenarios
-            if (errorMessage.includes("Cannot delete a completed plan")) {
-                if (confirm("This plan is marked as completed. Would you like to change it to active first?")) {
-                    try {
-                        // First change it to active, then delete
-                        await apiClient.patch(`/saving-plans/${id}`, {
-                            isCompleted: false,
-                            isActive: true
-                        });
-
-                        // Try delete again
-                        await apiClient.delete(`/saving-plans/${id}`);
-
-                        toast({
-                            title: "Success",
-                            description: "Plan deleted successfully",
-                        });
-                        fetchPlans();
-                    } catch (retryError) {
-                        toast({
-                            title: "Error",
-                            description: "Failed to modify and delete plan",
-                            variant: "destructive",
-                        });
-                    }
-                }
-            } else if (errorMessage.includes("Cannot delete plan with existing savings")) {
-                if (confirm("This plan has existing savings. Would you like to archive it instead?")) {
-                    try {
-                        await apiClient.patch(`/saving-plans/${id}`, { isActive: false });
-                        toast({
-                            title: "Success",
-                            description: "Plan archived successfully",
-                        });
-                        fetchPlans();
-                    } catch (archiveError) {
-                        toast({
-                            title: "Error",
-                            description: "Failed to archive plan",
-                            variant: "destructive",
-                        });
-                    }
-                }
+            if (error.response?.status === 401) {
+                toast({
+                    title: "Session Expired",
+                    description: "Please login again",
+                    variant: "destructive",
+                });
+            } else {
+                toast({
+                    title: "Error",
+                    description: error.response?.data?.message || "Failed to delete plan",
+                    variant: "destructive",
+                });
             }
         }
     };
 
-    // Handle update amount
-    const handleUpdateAmount = async (id: string, amount: number) => {
-        try {
-            await apiClient.patch(`/saving-plans/${id}/amount`, { amount });
+    // ========== HELPER FUNCTIONS ==========
 
-            toast({
-                title: "Success",
-                description: "Amount updated successfully",
-            });
-
-            fetchPlans(); // Refresh the list
-        } catch (error: any) {
-            toast({
-                title: "Error",
-                description: error.response?.data?.message || "Failed to update amount",
-                variant: "destructive",
-            });
-        }
+    const openUpdateAmountDialog = (plan: SavingPlan) => {
+        setSelectedPlan(plan);
+        setUpdateAmountValue(ensureNumber(plan.currentAmount));
+        setIsUpdateAmountDialogOpen(true);
     };
 
-    // Open edit dialog
     const openEditDialog = (plan: SavingPlan) => {
         setSelectedPlan(plan);
+
+        const frequency = (plan.frequency.toUpperCase() || "MONTHLY") as SavingFrequency;
+
         setEditPlan({
             name: plan.name,
             description: plan.description || "",
-            targetAmount: plan.targetAmount,
-            amountPerPeriod: plan.amountPerPeriod,
-            category: plan.category || "general",
-            color: plan.color || "#3b82f6",
+            targetAmount: ensureNumber(plan.targetAmount),
+            amountPerPeriod: ensureNumber(plan.amountPerPeriod),
             isActive: plan.isActive,
             isCompleted: plan.isCompleted,
-            frequency: plan.frequency,
+            frequency: frequency,
         });
         setIsEditDialogOpen(true);
     };
 
-    // Reset new plan form
     const resetNewPlanForm = () => {
         setNewPlan({
             name: "",
@@ -331,35 +470,18 @@ export default function SavingPlansPage() {
             startDate: new Date().toISOString().split('T')[0],
             frequency: "MONTHLY",
             amountPerPeriod: 100,
-            category: "general",
-            color: "#3b82f6",
         });
     };
 
-    // Filter plans based on search and status
-    const filteredPlans = plans.filter(plan => {
-        const matchesSearch = plan.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-            plan.description?.toLowerCase().includes(searchQuery.toLowerCase());
-
-        const matchesStatus = filterStatus === "all" ||
-            (filterStatus === "active" && plan.isActive) ||
-            (filterStatus === "completed" && plan.isCompleted) ||
-            (filterStatus === "inactive" && !plan.isActive);
-
-        return matchesSearch && matchesStatus;
-    });
-
-    // Format currency
     const formatCurrency = (amount: number) => {
         return new Intl.NumberFormat('en-US', {
             style: 'currency',
             currency: 'USD',
             minimumFractionDigits: 0,
-            maximumFractionDigits: 0,
+            maximumFractionDigits: 2,
         }).format(amount);
     };
 
-    // Format date
     const formatDate = (dateString: string) => {
         return new Date(dateString).toLocaleDateString('en-US', {
             month: 'short',
@@ -368,7 +490,6 @@ export default function SavingPlansPage() {
         });
     };
 
-    // Get frequency label
     const getFrequencyLabel = (frequency: string) => {
         const labels: Record<string, string> = {
             DAILY: 'Daily',
@@ -385,38 +506,35 @@ export default function SavingPlansPage() {
         return labels[frequency] || frequency;
     };
 
-    // Get days remaining
-    const getDaysRemaining = (endDate: string) => {
-        const today = new Date();
-        const end = new Date(endDate);
-        const diffTime = end.getTime() - today.getTime();
-        return Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+    const getMaxAddAmount = (plan: SavingPlan | null | undefined) => {
+        if (!plan) return 0;
+        return Math.max(0, ensureNumber(plan.targetAmount) - ensureNumber(plan.currentAmount));
     };
 
-    // Render loading skeletons
-    const renderLoadingSkeletons = () => (
-        <div className="space-y-4">
-            {[1, 2, 3].map((i) => (
-                <Card key={i}>
-                    <CardContent className="pt-6">
-                        <div className="flex items-center justify-between">
-                            <div className="space-y-2">
-                                <Skeleton className="h-4 w-40" />
-                                <Skeleton className="h-3 w-60" />
-                            </div>
-                            <Skeleton className="h-8 w-20" />
-                        </div>
-                        <div className="mt-4 space-y-2">
-                            <Skeleton className="h-4 w-full" />
-                            <Skeleton className="h-4 w-3/4" />
-                        </div>
-                    </CardContent>
-                </Card>
-            ))}
-        </div>
-    );
+    // ========== FILTERING ==========
 
-    // Render dashboard stats
+    const filteredPlans = plans.filter(plan => {
+        const matchesSearch = plan.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+            plan.description?.toLowerCase().includes(searchQuery.toLowerCase());
+
+        const matchesStatus = filterStatus === "all" ||
+            (filterStatus === "active" && plan.isActive) ||
+            (filterStatus === "completed" && plan.isCompleted) ||
+            (filterStatus === "inactive" && !plan.isActive);
+
+        return matchesSearch && matchesStatus;
+    });
+
+    // ========== EFFECTS ==========
+
+    useEffect(() => {
+        if (user) {
+            fetchPlans();
+        }
+    }, [user]);
+
+    // ========== RENDER COMPONENTS ==========
+
     const renderDashboardStats = () => {
         if (!dashboardData) return null;
 
@@ -444,9 +562,6 @@ export default function SavingPlansPage() {
                         <div className="text-2xl font-bold">
                             {formatCurrency(dashboardData.summary.totalTarget)}
                         </div>
-                        <p className="text-xs text-muted-foreground">
-                            Overall savings goal
-                        </p>
                     </CardContent>
                 </Card>
 
@@ -467,54 +582,49 @@ export default function SavingPlansPage() {
 
                 <Card>
                     <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                        <CardTitle className="text-sm font-medium">Overall Progress</CardTitle>
+                        <CardTitle className="text-sm font-medium">Progress</CardTitle>
                         <CheckCircle className="h-4 w-4 text-muted-foreground" />
                     </CardHeader>
                     <CardContent>
                         <div className="text-2xl font-bold">
                             {dashboardData.summary.overallProgress.toFixed(1)}%
                         </div>
-                        <Progress
-                            value={dashboardData.summary.overallProgress}
-                            className="mt-2"
-                        />
+                        <Progress value={dashboardData.summary.overallProgress} className="mt-2" />
                     </CardContent>
                 </Card>
             </div>
         );
     };
 
-    // Render plan card
     const renderPlanCard = (plan: SavingPlan) => {
-        const progress = (plan.currentAmount / plan.targetAmount) * 100;
-        const daysRemaining = plan.endDate ? getDaysRemaining(plan.endDate) : null;
+        const progress = (ensureNumber(plan.currentAmount) / ensureNumber(plan.targetAmount)) * 100;
 
         return (
             <Card key={plan.id} className="overflow-hidden">
                 <CardHeader className="pb-3">
                     <div className="flex items-start justify-between">
                         <div>
-                            <CardTitle className="flex items-center gap-2">
-                                {plan.name}
-                                {plan.isCompleted && (
-                                    <Badge variant="outline" className="bg-green-50 text-green-700 border-green-200">
-                                        <CheckCircle className="h-3 w-3 mr-1" />
-                                        Completed
-                                    </Badge>
-                                )}
-                                {plan.isActive && !plan.isCompleted && (
-                                    <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-200">
-                                        Active
-                                    </Badge>
-                                )}
-                                {!plan.isActive && !plan.isCompleted && (
-                                    <Badge variant="outline" className="bg-gray-50 text-gray-700 border-gray-200">
-                                        Inactive
-                                    </Badge>
-                                )}
-                            </CardTitle>
+                            <Link href={`/saving-plans/${plan.id}`} className="hover:underline">
+                                <CardTitle className="flex items-center gap-2">
+                                    {plan.name}
+                                    {plan.isCompleted ? (
+                                        <Badge variant="outline" className="bg-green-50 text-green-700 border-green-200">
+                                            <CheckCircle className="h-3 w-3 mr-1" />
+                                            Completed
+                                        </Badge>
+                                    ) : plan.isActive ? (
+                                        <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-200">
+                                            Active
+                                        </Badge>
+                                    ) : (
+                                        <Badge variant="outline" className="bg-gray-50 text-gray-700 border-gray-200">
+                                            Inactive
+                                        </Badge>
+                                    )}
+                                </CardTitle>
+                            </Link>
                             <CardDescription>
-                                {plan.description || "No description provided"}
+                                {plan.description || "No description"}
                             </CardDescription>
                         </div>
                         <DropdownMenu>
@@ -525,25 +635,34 @@ export default function SavingPlansPage() {
                             </DropdownMenuTrigger>
                             <DropdownMenuContent align="end">
                                 <DropdownMenuLabel>Actions</DropdownMenuLabel>
+                                <DropdownMenuItem asChild>
+                                    <Link href={`/saving-plans/${plan.id}`}>
+                                        <Eye className="h-4 w-4 mr-2" />
+                                        View Details
+                                    </Link>
+                                </DropdownMenuItem>
                                 <DropdownMenuItem onClick={() => openEditDialog(plan)}>
                                     <Edit className="h-4 w-4 mr-2" />
                                     Edit Plan
                                 </DropdownMenuItem>
+                                <DropdownMenuSeparator />
                                 <DropdownMenuItem onClick={() => {
-                                    const newAmount = parseFloat(prompt(`Update amount for ${plan.name} (Current: $${plan.currentAmount})`, plan.currentAmount.toString()) || "0");
-                                    if (!isNaN(newAmount) && newAmount >= 0) {
-                                        handleUpdateAmount(plan.id, newAmount);
-                                    }
+                                    setSelectedPlan(plan);
+                                    setIsAddTransactionDialogOpen(true);
                                 }}>
-                                    <DollarSign className="h-4 w-4 mr-2" />
-                                    Update Amount
+                                    <Plus className="h-4 w-4 mr-2" />
+                                    Quick Add (Regular)
+                                </DropdownMenuItem>
+                                <DropdownMenuItem onClick={() => openUpdateAmountDialog(plan)}>
+                                    <Target className="h-4 w-4 mr-2" />
+                                    Set Manual Amount
                                 </DropdownMenuItem>
                                 <DropdownMenuSeparator />
                                 <DropdownMenuItem
-                                    className="text-destructive"
+                                    className="text-destructive focus:text-destructive"
                                     onClick={() => handleDeletePlan(plan.id, plan.name)}
                                 >
-                                    <Trash2 className="h-4 w-4 mr-2" />
+                                    <Trash2 className="h-4 w-4 mr-2 text-destructive" />
                                     Delete Plan
                                 </DropdownMenuItem>
                             </DropdownMenuContent>
@@ -552,7 +671,6 @@ export default function SavingPlansPage() {
                 </CardHeader>
                 <CardContent>
                     <div className="space-y-4">
-                        {/* Progress bar */}
                         <div>
                             <div className="flex justify-between text-sm mb-1">
                                 <span className="font-medium">
@@ -563,7 +681,6 @@ export default function SavingPlansPage() {
                             <Progress value={progress} className="h-2" />
                         </div>
 
-                        {/* Plan details */}
                         <div className="grid grid-cols-2 gap-4 text-sm">
                             <div>
                                 <p className="text-muted-foreground">Frequency</p>
@@ -581,7 +698,7 @@ export default function SavingPlansPage() {
                                 <div>
                                     <p className="text-muted-foreground flex items-center gap-1">
                                         <Clock className="h-3 w-3" />
-                                        {daysRemaining && daysRemaining > 0 ? `${daysRemaining} days left` : 'Completed'}
+                                        End Date
                                     </p>
                                     <p className="font-medium">{formatDate(plan.endDate)}</p>
                                 </div>
@@ -589,18 +706,26 @@ export default function SavingPlansPage() {
                         </div>
                     </div>
                 </CardContent>
-                <CardFooter className="pt-0">
+                <CardFooter className="flex gap-2 pt-0">
                     <Button
                         variant="outline"
-                        className="w-full"
+                        className="flex-1"
+                        asChild
+                    >
+                        <Link href={`/saving-plans/${plan.id}`}>
+                            View Details
+                        </Link>
+                    </Button>
+                    <Button
+                        variant="default"
+                        className="flex-1"
                         onClick={() => {
-                            const amountToAdd = parseFloat(prompt(`How much to add to ${plan.name}?`, plan.amountPerPeriod.toString()) || "0");
-                            if (!isNaN(amountToAdd) && amountToAdd > 0) {
-                                handleUpdateAmount(plan.id, plan.currentAmount + amountToAdd);
-                            }
+                            setSelectedPlan(plan);
+                            setIsAddTransactionDialogOpen(true);
                         }}
                         disabled={plan.isCompleted}
                     >
+                        <DollarSign className="mr-2 h-4 w-4" />
                         Add Savings
                     </Button>
                 </CardFooter>
@@ -608,7 +733,6 @@ export default function SavingPlansPage() {
         );
     };
 
-    // Render empty state
     const renderEmptyState = () => (
         <Card>
             <CardContent className="pt-6 text-center">
@@ -617,7 +741,7 @@ export default function SavingPlansPage() {
                 </div>
                 <h3 className="text-lg font-semibold">No saving plans yet</h3>
                 <p className="text-muted-foreground mt-2 mb-4">
-                    Create your first saving plan to start tracking your financial goals
+                    Create your first saving plan to track your financial goals
                 </p>
                 <Button onClick={() => setIsCreateDialogOpen(true)}>
                     <Plus className="mr-2 h-4 w-4" />
@@ -627,6 +751,28 @@ export default function SavingPlansPage() {
         </Card>
     );
 
+    const renderLoadingSkeletons = () => (
+        <div className="space-y-4">
+            {[1, 2, 3].map((i) => (
+                <Card key={i}>
+                    <CardContent className="pt-6">
+                        <div className="flex items-center justify-between">
+                            <div className="space-y-2">
+                                <Skeleton className="h-4 w-40" />
+                                <Skeleton className="h-3 w-60" />
+                            </div>
+                            <Skeleton className="h-8 w-20" />
+                        </div>
+                        <div className="mt-4 space-y-2">
+                            <Skeleton className="h-4 w-full" />
+                            <Skeleton className="h-4 w-3/4" />
+                        </div>
+                    </CardContent>
+                </Card>
+            ))}
+        </div>
+    );
+
     return (
         <ProtectedRoute>
             <SidebarProvider>
@@ -634,291 +780,15 @@ export default function SavingPlansPage() {
                 <SidebarInset>
                     <Header title="Saving Plans" subtitle="Track and manage your savings goals" />
                     <div className="flex flex-1 flex-col gap-6 p-6">
-                        {/* Header with actions */}
+                        {/* Header */}
                         <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
                             <div className="flex items-center gap-2">
-                                <Button variant="outline">
-                                    <Download className="mr-2 h-4 w-4" />
-                                    Export
+                                <Button onClick={() => setIsCreateDialogOpen(true)}>
+                                    <Plus className="mr-2 h-4 w-4" />
+                                    New Plan
                                 </Button>
-                                <Dialog open={isCreateDialogOpen} onOpenChange={setIsCreateDialogOpen}>
-                                    <DialogTrigger asChild>
-                                        <Button>
-                                            <Plus className="mr-2 h-4 w-4" />
-                                            New Plan
-                                        </Button>
-                                    </DialogTrigger>
-                                    <DialogContent className="sm:max-w-[500px]">
-                                        <DialogHeader>
-                                            <DialogTitle>Create New Saving Plan</DialogTitle>
-                                            <DialogDescription>
-                                                Set up a new savings goal with target amount and frequency.
-                                            </DialogDescription>
-                                        </DialogHeader>
-                                        <div className="grid gap-4 py-4">
-                                            <div className="grid grid-cols-2 gap-4">
-                                                <div className="space-y-2">
-                                                    <Label htmlFor="name">Plan Name *</Label>
-                                                    <Input
-                                                        id="name"
-                                                        value={newPlan.name}
-                                                        onChange={(e) => setNewPlan({ ...newPlan, name: e.target.value })}
-                                                        placeholder="e.g., Vacation Fund"
-                                                    />
-                                                </div>
-                                                <div className="space-y-2">
-                                                    <Label htmlFor="category">Category</Label>
-                                                    <Select
-                                                        value={newPlan.category}
-                                                        onValueChange={(value) => setNewPlan({ ...newPlan, category: value })}
-                                                    >
-                                                        <SelectTrigger>
-                                                            <SelectValue placeholder="Select category" />
-                                                        </SelectTrigger>
-                                                        <SelectContent>
-                                                            <SelectItem value="general">General</SelectItem>
-                                                            <SelectItem value="vacation">Vacation</SelectItem>
-                                                            <SelectItem value="emergency">Emergency Fund</SelectItem>
-                                                            <SelectItem value="investment">Investment</SelectItem>
-                                                            <SelectItem value="education">Education</SelectItem>
-                                                            <SelectItem value="car">Car</SelectItem>
-                                                            <SelectItem value="house">House</SelectItem>
-                                                            <SelectItem value="wedding">Wedding</SelectItem>
-                                                        </SelectContent>
-                                                    </Select>
-                                                </div>
-                                            </div>
-
-                                            <div className="space-y-2">
-                                                <Label htmlFor="description">Description (Optional)</Label>
-                                                <Input
-                                                    id="description"
-                                                    value={newPlan.description}
-                                                    onChange={(e) => setNewPlan({ ...newPlan, description: e.target.value })}
-                                                    placeholder="What are you saving for?"
-                                                />
-                                            </div>
-
-                                            <div className="grid grid-cols-2 gap-4">
-                                                <div className="space-y-2">
-                                                    <Label htmlFor="targetAmount">Target Amount *</Label>
-                                                    <div className="relative">
-                                                        <span className="absolute left-3 top-1/2 transform -translate-y-1/2">$</span>
-                                                        <Input
-                                                            id="targetAmount"
-                                                            type="number"
-                                                            value={newPlan.targetAmount}
-                                                            onChange={(e) => setNewPlan({ ...newPlan, targetAmount: parseFloat(e.target.value) || 0 })}
-                                                            className="pl-8"
-                                                            min="1"
-                                                        />
-                                                    </div>
-                                                </div>
-                                                <div className="space-y-2">
-                                                    <Label htmlFor="amountPerPeriod">Amount Per Period *</Label>
-                                                    <div className="relative">
-                                                        <span className="absolute left-3 top-1/2 transform -translate-y-1/2">$</span>
-                                                        <Input
-                                                            id="amountPerPeriod"
-                                                            type="number"
-                                                            value={newPlan.amountPerPeriod}
-                                                            onChange={(e) => setNewPlan({ ...newPlan, amountPerPeriod: parseFloat(e.target.value) || 0 })}
-                                                            className="pl-8"
-                                                            min="1"
-                                                        />
-                                                    </div>
-                                                </div>
-                                            </div>
-
-                                            <div className="grid grid-cols-2 gap-4">
-                                                <div className="space-y-2">
-                                                    <Label htmlFor="startDate">Start Date *</Label>
-                                                    <Input
-                                                        id="startDate"
-                                                        type="date"
-                                                        value={newPlan.startDate}
-                                                        onChange={(e) => setNewPlan({ ...newPlan, startDate: e.target.value })}
-                                                    />
-                                                </div>
-                                                <div className="space-y-2">
-                                                    <Label htmlFor="frequency">Frequency *</Label>
-                                                    <Select
-                                                        value={newPlan.frequency}
-                                                        onValueChange={(value: any) => setNewPlan({ ...newPlan, frequency: value })}
-                                                    >
-                                                        <SelectTrigger>
-                                                            <SelectValue placeholder="Select frequency" />
-                                                        </SelectTrigger>
-                                                        <SelectContent>
-                                                            <SelectItem value="DAILY">Daily</SelectItem>
-                                                            <SelectItem value="WEEKLY">Weekly</SelectItem>
-                                                            <SelectItem value="MONTHLY">Monthly</SelectItem>
-                                                            <SelectItem value="YEARLY">Yearly</SelectItem>
-                                                            <SelectItem value="CUSTOM">Custom</SelectItem>
-                                                        </SelectContent>
-                                                    </Select>
-                                                </div>
-                                            </div>
-                                        </div>
-                                        <DialogFooter>
-                                            <Button variant="outline" onClick={() => setIsCreateDialogOpen(false)}>
-                                                Cancel
-                                            </Button>
-                                            <Button onClick={handleCreatePlan}>
-                                                Create Plan
-                                            </Button>
-                                        </DialogFooter>
-                                    </DialogContent>
-                                </Dialog>
                             </div>
                         </div>
-
-                        {/* Edit Plan Dialog */}
-                        <Dialog open={isEditDialogOpen} onOpenChange={setIsEditDialogOpen}>
-                            <DialogContent className="sm:max-w-[500px]">
-                                <DialogHeader>
-                                    <DialogTitle>Edit Saving Plan</DialogTitle>
-                                    <DialogDescription>
-                                        Update your savings goal details.
-                                    </DialogDescription>
-                                </DialogHeader>
-                                <div className="grid gap-4 py-4">
-                                    <div className="space-y-2">
-                                        <Label htmlFor="edit-name">Plan Name *</Label>
-                                        <Input
-                                            id="edit-name"
-                                            value={editPlan.name || ""}
-                                            onChange={(e) => setEditPlan({ ...editPlan, name: e.target.value })}
-                                            placeholder="e.g., Vacation Fund"
-                                        />
-                                    </div>
-
-                                    <div className="space-y-2">
-                                        <Label htmlFor="edit-description">Description (Optional)</Label>
-                                        <Input
-                                            id="edit-description"
-                                            value={editPlan.description || ""}
-                                            onChange={(e) => setEditPlan({ ...editPlan, description: e.target.value })}
-                                            placeholder="What are you saving for?"
-                                        />
-                                    </div>
-
-                                    <div className="grid grid-cols-2 gap-4">
-                                        <div className="space-y-2">
-                                            <Label htmlFor="edit-targetAmount">Target Amount *</Label>
-                                            <div className="relative">
-                                                <span className="absolute left-3 top-1/2 transform -translate-y-1/2">$</span>
-                                                <Input
-                                                    id="edit-targetAmount"
-                                                    type="number"
-                                                    value={editPlan.targetAmount || 0}
-                                                    onChange={(e) => setEditPlan({ ...editPlan, targetAmount: parseFloat(e.target.value) || 0 })}
-                                                    className="pl-8"
-                                                    min="1"
-                                                />
-                                            </div>
-                                        </div>
-                                        <div className="space-y-2">
-                                            <Label htmlFor="edit-amountPerPeriod">Amount Per Period *</Label>
-                                            <div className="relative">
-                                                <span className="absolute left-3 top-1/2 transform -translate-y-1/2">$</span>
-                                                <Input
-                                                    id="edit-amountPerPeriod"
-                                                    type="number"
-                                                    value={editPlan.amountPerPeriod || 0}
-                                                    onChange={(e) => setEditPlan({ ...editPlan, amountPerPeriod: parseFloat(e.target.value) || 0 })}
-                                                    className="pl-8"
-                                                    min="1"
-                                                />
-                                            </div>
-                                        </div>
-                                    </div>
-
-                                    <div className="grid grid-cols-2 gap-4">
-                                        <div className="space-y-2">
-                                            <Label htmlFor="edit-category">Category</Label>
-                                            <Select
-                                                value={editPlan.category || "general"}
-                                                onValueChange={(value) => setEditPlan({ ...editPlan, category: value })}
-                                            >
-                                                <SelectTrigger>
-                                                    <SelectValue placeholder="Select category" />
-                                                </SelectTrigger>
-                                                <SelectContent>
-                                                    <SelectItem value="general">General</SelectItem>
-                                                    <SelectItem value="vacation">Vacation</SelectItem>
-                                                    <SelectItem value="emergency">Emergency Fund</SelectItem>
-                                                    <SelectItem value="investment">Investment</SelectItem>
-                                                    <SelectItem value="education">Education</SelectItem>
-                                                    <SelectItem value="car">Car</SelectItem>
-                                                    <SelectItem value="house">House</SelectItem>
-                                                    <SelectItem value="wedding">Wedding</SelectItem>
-                                                </SelectContent>
-                                            </Select>
-                                        </div>
-                                        <div className="space-y-2">
-                                            <Label htmlFor="edit-frequency">Frequency *</Label>
-                                            <Select
-                                                value={editPlan.frequency || "MONTHLY"}
-                                                onValueChange={(value: any) => setEditPlan({ ...editPlan, frequency: value })}
-                                            >
-                                                <SelectTrigger>
-                                                    <SelectValue placeholder="Select frequency" />
-                                                </SelectTrigger>
-                                                <SelectContent>
-                                                    <SelectItem value="DAILY">Daily</SelectItem>
-                                                    <SelectItem value="WEEKLY">Weekly</SelectItem>
-                                                    <SelectItem value="MONTHLY">Monthly</SelectItem>
-                                                    <SelectItem value="YEARLY">Yearly</SelectItem>
-                                                    <SelectItem value="CUSTOM">Custom</SelectItem>
-                                                </SelectContent>
-                                            </Select>
-                                        </div>
-                                    </div>
-
-                                    <div className="grid grid-cols-2 gap-4">
-                                        <div className="space-y-2">
-                                            <Label htmlFor="edit-isActive">Status</Label>
-                                            <Select
-                                                value={editPlan.isActive ? "active" : "inactive"}
-                                                onValueChange={(value) => setEditPlan({ ...editPlan, isActive: value === "active" })}
-                                            >
-                                                <SelectTrigger>
-                                                    <SelectValue placeholder="Select status" />
-                                                </SelectTrigger>
-                                                <SelectContent>
-                                                    <SelectItem value="active">Active</SelectItem>
-                                                    <SelectItem value="inactive">Inactive</SelectItem>
-                                                </SelectContent>
-                                            </Select>
-                                        </div>
-                                        <div className="space-y-2">
-                                            <Label htmlFor="edit-isCompleted">Completion</Label>
-                                            <Select
-                                                value={editPlan.isCompleted ? "completed" : "not-completed"}
-                                                onValueChange={(value) => setEditPlan({ ...editPlan, isCompleted: value === "completed" })}
-                                            >
-                                                <SelectTrigger>
-                                                    <SelectValue placeholder="Select completion" />
-                                                </SelectTrigger>
-                                                <SelectContent>
-                                                    <SelectItem value="not-completed">Not Completed</SelectItem>
-                                                    <SelectItem value="completed">Completed</SelectItem>
-                                                </SelectContent>
-                                            </Select>
-                                        </div>
-                                    </div>
-                                </div>
-                                <DialogFooter>
-                                    <Button variant="outline" onClick={() => setIsEditDialogOpen(false)}>
-                                        Cancel
-                                    </Button>
-                                    <Button onClick={handleUpdatePlan}>
-                                        Update Plan
-                                    </Button>
-                                </DialogFooter>
-                            </DialogContent>
-                        </Dialog>
 
                         {/* Dashboard Stats */}
                         {renderDashboardStats()}
@@ -934,72 +804,409 @@ export default function SavingPlansPage() {
                                     className="pl-9"
                                 />
                             </div>
-                            <div className="flex gap-2">
-                                <Select value={filterStatus} onValueChange={setFilterStatus}>
-                                    <SelectTrigger className="w-[180px]">
-                                        <Filter className="mr-2 h-4 w-4" />
-                                        <SelectValue placeholder="Filter by status" />
-                                    </SelectTrigger>
-                                    <SelectContent>
-                                        <SelectItem value="all">All Plans</SelectItem>
-                                        <SelectItem value="active">Active</SelectItem>
-                                        <SelectItem value="completed">Completed</SelectItem>
-                                        <SelectItem value="inactive">Inactive</SelectItem>
-                                    </SelectContent>
-                                </Select>
-                            </div>
+                            <Select value={filterStatus} onValueChange={setFilterStatus}>
+                                <SelectTrigger className="w-[180px]">
+                                    <Filter className="mr-2 h-4 w-4" />
+                                    <SelectValue placeholder="Filter by status" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                    <SelectItem value="all">All Plans</SelectItem>
+                                    <SelectItem value="active">Active</SelectItem>
+                                    <SelectItem value="completed">Completed</SelectItem>
+                                    <SelectItem value="inactive">Inactive</SelectItem>
+                                </SelectContent>
+                            </Select>
                         </div>
 
-                        {/* Tabs for different views */}
+                        {/* Plans List */}
                         <Tabs defaultValue="all" className="w-full">
                             <TabsList>
                                 <TabsTrigger value="all">All Plans</TabsTrigger>
                                 <TabsTrigger value="active">Active</TabsTrigger>
                                 <TabsTrigger value="completed">Completed</TabsTrigger>
                             </TabsList>
+
                             <TabsContent value="all" className="mt-4">
-                                {isLoading ? (
-                                    renderLoadingSkeletons()
-                                ) : filteredPlans.length > 0 ? (
-                                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                                        {filteredPlans.map(renderPlanCard)}
-                                    </div>
-                                ) : (
-                                    renderEmptyState()
-                                )}
+                                {isLoading ? renderLoadingSkeletons() :
+                                    filteredPlans.length > 0 ? (
+                                        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                                            {filteredPlans.map(renderPlanCard)}
+                                        </div>
+                                    ) : renderEmptyState()
+                                }
                             </TabsContent>
+
                             <TabsContent value="active" className="mt-4">
-                                {isLoading ? (
-                                    renderLoadingSkeletons()
-                                ) : filteredPlans.filter(p => p.isActive).length > 0 ? (
-                                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                                        {filteredPlans.filter(p => p.isActive).map(renderPlanCard)}
-                                    </div>
-                                ) : (
-                                    <Card>
-                                        <CardContent className="pt-6 text-center">
-                                            <p className="text-muted-foreground">No active saving plans found.</p>
-                                        </CardContent>
-                                    </Card>
-                                )}
+                                {isLoading ? renderLoadingSkeletons() :
+                                    filteredPlans.filter(p => p.isActive).length > 0 ? (
+                                        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                                            {filteredPlans.filter(p => p.isActive).map(renderPlanCard)}
+                                        </div>
+                                    ) : (
+                                        <Card>
+                                            <CardContent className="pt-6 text-center">
+                                                <p className="text-muted-foreground">No active saving plans found.</p>
+                                            </CardContent>
+                                        </Card>
+                                    )
+                                }
                             </TabsContent>
+
                             <TabsContent value="completed" className="mt-4">
-                                {isLoading ? (
-                                    renderLoadingSkeletons()
-                                ) : filteredPlans.filter(p => p.isCompleted).length > 0 ? (
-                                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                                        {filteredPlans.filter(p => p.isCompleted).map(renderPlanCard)}
-                                    </div>
-                                ) : (
-                                    <Card>
-                                        <CardContent className="pt-6 text-center">
-                                            <p className="text-muted-foreground">No completed saving plans found.</p>
-                                        </CardContent>
-                                    </Card>
-                                )}
+                                {isLoading ? renderLoadingSkeletons() :
+                                    filteredPlans.filter(p => p.isCompleted).length > 0 ? (
+                                        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                                            {filteredPlans.filter(p => p.isCompleted).map(renderPlanCard)}
+                                        </div>
+                                    ) : (
+                                        <Card>
+                                            <CardContent className="pt-6 text-center">
+                                                <p className="text-muted-foreground">No completed saving plans found.</p>
+                                            </CardContent>
+                                        </Card>
+                                    )
+                                }
                             </TabsContent>
                         </Tabs>
                     </div>
+
+                    {/* ========== DIALOGS ========== */}
+
+                    {/* Create Plan Dialog */}
+                    <Dialog open={isCreateDialogOpen} onOpenChange={setIsCreateDialogOpen}>
+                        <DialogContent className="sm:max-w-[500px]">
+                            <DialogHeader>
+                                <DialogTitle>Create New Saving Plan</DialogTitle>
+                                <DialogDescription>
+                                    Set up a new savings goal with target amount and frequency.
+                                </DialogDescription>
+                            </DialogHeader>
+                            <div className="grid gap-4 py-4">
+                                <div className="space-y-2">
+                                    <Label htmlFor="name">Plan Name *</Label>
+                                    <Input
+                                        id="name"
+                                        value={newPlan.name}
+                                        onChange={(e) => setNewPlan({ ...newPlan, name: e.target.value })}
+                                        placeholder="e.g., Vacation Fund"
+                                    />
+                                </div>
+
+                                <div className="space-y-2">
+                                    <Label htmlFor="description">Description (Optional)</Label>
+                                    <Input
+                                        id="description"
+                                        value={newPlan.description}
+                                        onChange={(e) => setNewPlan({ ...newPlan, description: e.target.value })}
+                                        placeholder="What are you saving for?"
+                                    />
+                                </div>
+
+                                <div className="grid grid-cols-2 gap-4">
+                                    <div className="space-y-2">
+                                        <Label htmlFor="targetAmount">Target Amount *</Label>
+                                        <div className="relative">
+                                            <span className="absolute left-3 top-1/2 transform -translate-y-1/2">$</span>
+                                            <Input
+                                                id="targetAmount"
+                                                type="number"
+                                                value={newPlan.targetAmount}
+                                                onChange={(e) => setNewPlan({ ...newPlan, targetAmount: ensureNumber(e.target.value) })}
+                                                className="pl-8"
+                                                min="1"
+                                                step="0.01"
+                                            />
+                                        </div>
+                                    </div>
+                                    <div className="space-y-2">
+                                        <Label htmlFor="amountPerPeriod">Amount Per Period *</Label>
+                                        <div className="relative">
+                                            <span className="absolute left-3 top-1/2 transform -translate-y-1/2">$</span>
+                                            <Input
+                                                id="amountPerPeriod"
+                                                type="number"
+                                                value={newPlan.amountPerPeriod}
+                                                onChange={(e) => setNewPlan({ ...newPlan, amountPerPeriod: ensureNumber(e.target.value) })}
+                                                className="pl-8"
+                                                min="0.01"
+                                                step="0.01"
+                                            />
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div className="grid grid-cols-2 gap-4">
+                                    <div className="space-y-2">
+                                        <Label htmlFor="frequency">Frequency *</Label>
+                                        <Select
+                                            value={newPlan.frequency}
+                                            onValueChange={(value: any) => setNewPlan({ ...newPlan, frequency: value })}
+                                        >
+                                            <SelectTrigger>
+                                                <SelectValue placeholder="Select frequency" />
+                                            </SelectTrigger>
+                                            <SelectContent>
+                                                <SelectItem value="DAILY">Daily</SelectItem>
+                                                <SelectItem value="WEEKLY">Weekly</SelectItem>
+                                                <SelectItem value="MONTHLY">Monthly</SelectItem>
+                                                <SelectItem value="YEARLY">Yearly</SelectItem>
+                                                <SelectItem value="CUSTOM">Custom</SelectItem>
+                                            </SelectContent>
+                                        </Select>
+                                    </div>
+                                    <div className="space-y-2">
+                                        <Label htmlFor="startDate">Start Date *</Label>
+                                        <Input
+                                            id="startDate"
+                                            type="date"
+                                            value={newPlan.startDate}
+                                            onChange={(e) => setNewPlan({ ...newPlan, startDate: e.target.value })}
+                                        />
+                                    </div>
+                                </div>
+                            </div>
+                            <DialogFooter>
+                                <Button variant="outline" onClick={() => setIsCreateDialogOpen(false)}>
+                                    Cancel
+                                </Button>
+                                <Button onClick={handleCreatePlan} disabled={isProcessing}>
+                                    {isProcessing ? (
+                                        <>
+                                            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                                            Creating...
+                                        </>
+                                    ) : "Create Plan"}
+                                </Button>
+                            </DialogFooter>
+                        </DialogContent>
+                    </Dialog>
+
+                    {/* Add Savings Dialog */}
+                    <Dialog open={isAddSavingsDialogOpen} onOpenChange={setIsAddSavingsDialogOpen}>
+                        <DialogContent className="sm:max-w-[425px]">
+                            <DialogHeader>
+                                <DialogTitle>Add Savings</DialogTitle>
+                                <DialogDescription>
+                                    Add money to: {selectedPlan?.name}
+                                </DialogDescription>
+                            </DialogHeader>
+                            <div className="grid gap-4 py-4">
+                                <div className="space-y-2">
+                                    <Label htmlFor="add-amount">Amount to Add *</Label>
+                                    <div className="relative">
+                                        <span className="absolute left-3 top-1/2 transform -translate-y-1/2">$</span>
+                                        <Input
+                                            id="add-amount"
+                                            type="number"
+                                            value={addSavingsAmount}
+                                            onChange={(e) => setAddSavingsAmount(ensureNumber(e.target.value))}
+                                            className="pl-8"
+                                            min="0.01"
+                                            step="0.01"
+                                            max={getMaxAddAmount(selectedPlan)}
+                                        />
+                                    </div>
+                                    <div className="text-sm text-muted-foreground">
+                                        Current: {formatCurrency(selectedPlan?.currentAmount || 0)} |
+                                        Target: {formatCurrency(selectedPlan?.targetAmount || 0)} |
+                                        Remaining: {formatCurrency(getMaxAddAmount(selectedPlan))}
+                                    </div>
+                                </div>
+
+                                <div className="space-y-2">
+                                    <Label htmlFor="add-note">Note (Optional)</Label>
+                                    <Textarea
+                                        id="add-note"
+                                        value={addSavingsNote}
+                                        onChange={(e) => setAddSavingsNote(e.target.value)}
+                                        placeholder="Add a note about this deposit..."
+                                        rows={3}
+                                    />
+                                </div>
+
+                                {selectedPlan && addSavingsAmount > getMaxAddAmount(selectedPlan) && (
+                                    <div className="flex items-start gap-2 text-sm text-amber-600 bg-amber-50 p-3 rounded-lg">
+                                        <AlertCircle className="h-4 w-4 mt-0.5 flex-shrink-0" />
+                                        <div>
+                                            <p className="font-medium">Amount exceeds target</p>
+                                            <p>This will mark the plan as completed.</p>
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
+                        </DialogContent>
+                    </Dialog>
+
+                    {/* Update Amount Dialog */}
+                    <Dialog open={isUpdateAmountDialogOpen} onOpenChange={setIsUpdateAmountDialogOpen}>
+                        <DialogContent className="sm:max-w-[425px]">
+                            <DialogHeader>
+                                <DialogTitle>Set Current Amount</DialogTitle>
+                                <DialogDescription>
+                                    Update amount for: {selectedPlan?.name}
+                                </DialogDescription>
+                            </DialogHeader>
+                            <div className="grid gap-4 py-4">
+                                <div className="space-y-2">
+                                    <Label htmlFor="update-amount">Current Amount *</Label>
+                                    <div className="relative">
+                                        <span className="absolute left-3 top-1/2 transform -translate-y-1/2">$</span>
+                                        <Input
+                                            id="update-amount"
+                                            type="number"
+                                            value={updateAmountValue}
+                                            onChange={(e) => setUpdateAmountValue(ensureNumber(e.target.value))}
+                                            className="pl-8"
+                                            min="0"
+                                            step="0.01"
+                                            max={selectedPlan?.targetAmount}
+                                        />
+                                    </div>
+                                    <div className="text-sm text-muted-foreground">
+                                        Target: {formatCurrency(selectedPlan?.targetAmount || 0)}
+                                    </div>
+                                </div>
+                            </div>
+                            <DialogFooter>
+                                <Button variant="outline" onClick={() => setIsUpdateAmountDialogOpen(false)}>
+                                    Cancel
+                                </Button>
+                                <Button onClick={handleUpdateAmount} disabled={isProcessing || updateAmountValue < 0}>
+                                    {isProcessing ? (
+                                        <>
+                                            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                                            Updating...
+                                        </>
+                                    ) : "Update Amount"}
+                                </Button>
+                            </DialogFooter>
+                        </DialogContent>
+                    </Dialog>
+
+                    {/* Edit Plan Dialog */}
+                    <Dialog open={isEditDialogOpen} onOpenChange={setIsEditDialogOpen}>
+                        <DialogContent className="sm:max-w-[500px]">
+                            <DialogHeader>
+                                <DialogTitle>Edit Saving Plan</DialogTitle>
+                                <DialogDescription>
+                                    Update your savings goal details.
+                                </DialogDescription>
+                            </DialogHeader>
+                            <div className="grid gap-4 py-4">
+                                <div className="space-y-2">
+                                    <Label htmlFor="edit-name">Plan Name *</Label>
+                                    <Input
+                                        id="edit-name"
+                                        value={editPlan.name || ""}
+                                        onChange={(e) => setEditPlan({ ...editPlan, name: e.target.value })}
+                                    />
+                                </div>
+
+                                <div className="space-y-2">
+                                    <Label htmlFor="edit-description">Description (Optional)</Label>
+                                    <Input
+                                        id="edit-description"
+                                        value={editPlan.description || ""}
+                                        onChange={(e) => setEditPlan({ ...editPlan, description: e.target.value })}
+                                    />
+                                </div>
+
+                                <div className="grid grid-cols-2 gap-4">
+                                    <div className="space-y-2">
+                                        <Label htmlFor="edit-targetAmount">Target Amount *</Label>
+                                        <div className="relative">
+                                            <span className="absolute left-3 top-1/2 transform -translate-y-1/2">$</span>
+                                            <Input
+                                                id="edit-targetAmount"
+                                                type="number"
+                                                value={editPlan.targetAmount || 0}
+                                                onChange={(e) => setEditPlan({ ...editPlan, targetAmount: ensureNumber(e.target.value) })}
+                                                className="pl-8"
+                                                min="1"
+                                                step="0.01"
+                                            />
+                                        </div>
+                                    </div>
+                                    <div className="space-y-2">
+                                        <Label htmlFor="edit-amountPerPeriod">Amount Per Period *</Label>
+                                        <div className="relative">
+                                            <span className="absolute left-3 top-1/2 transform -translate-y-1/2">$</span>
+                                            <Input
+                                                id="edit-amountPerPeriod"
+                                                type="number"
+                                                value={editPlan.amountPerPeriod || 0}
+                                                onChange={(e) => setEditPlan({ ...editPlan, amountPerPeriod: ensureNumber(e.target.value) })}
+                                                className="pl-8"
+                                                min="0.01"
+                                                step="0.01"
+                                            />
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div className="grid grid-cols-2 gap-4">
+                                    <div className="space-y-2">
+                                        <Label htmlFor="edit-frequency">Frequency *</Label>
+                                        <Select
+                                            value={editPlan.frequency || "MONTHLY"}
+                                            onValueChange={(value: any) => setEditPlan({ ...editPlan, frequency: value })}
+                                        >
+                                            <SelectTrigger>
+                                                <SelectValue placeholder="Select frequency" />
+                                            </SelectTrigger>
+                                            <SelectContent>
+                                                <SelectItem value="DAILY">Daily</SelectItem>
+                                                <SelectItem value="WEEKLY">Weekly</SelectItem>
+                                                <SelectItem value="MONTHLY">Monthly</SelectItem>
+                                                <SelectItem value="YEARLY">Yearly</SelectItem>
+                                                <SelectItem value="CUSTOM">Custom</SelectItem>
+                                            </SelectContent>
+                                        </Select>
+                                    </div>
+                                    <div className="space-y-2">
+                                        <Label htmlFor="edit-isActive">Status</Label>
+                                        <Select
+                                            value={editPlan.isActive ? "active" : "inactive"}
+                                            onValueChange={(value) => setEditPlan({ ...editPlan, isActive: value === "active" })}
+                                        >
+                                            <SelectTrigger>
+                                                <SelectValue placeholder="Select status" />
+                                            </SelectTrigger>
+                                            <SelectContent>
+                                                <SelectItem value="active">Active</SelectItem>
+                                                <SelectItem value="inactive">Inactive</SelectItem>
+                                            </SelectContent>
+                                        </Select>
+                                    </div>
+                                </div>
+                            </div>
+                            <DialogFooter>
+                                <Button variant="outline" onClick={() => setIsEditDialogOpen(false)}>
+                                    Cancel
+                                </Button>
+                                <Button onClick={handleUpdatePlan} disabled={isProcessing}>
+                                    {isProcessing ? (
+                                        <>
+                                            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                                            Updating...
+                                        </>
+                                    ) : "Update Plan"}
+                                </Button>
+                            </DialogFooter>
+                        </DialogContent>
+                    </Dialog>
+
+                    {/* Add Transaction Dialog */}
+                    {selectedPlan && (
+                        <AddTransactionDialog
+                            open={isAddTransactionDialogOpen}
+                            onOpenChange={setIsAddTransactionDialogOpen}
+                            plan={selectedPlan}
+                            onSubmit={handleAddTransaction}
+                            isProcessing={isProcessing}
+                            defaultType={TransactionType.SAVED}
+                        />
+                    )}
                 </SidebarInset>
             </SidebarProvider>
         </ProtectedRoute>

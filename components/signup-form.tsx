@@ -19,6 +19,7 @@ export function SignupForm({
   className,
   ...props
 }: React.ComponentProps<"form">) {
+  const [username, setUsername] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
@@ -32,6 +33,11 @@ export function SignupForm({
     setError("");
 
     // Validation
+    if (!username.trim()) {
+      setError("Username is required");
+      return;
+    }
+
     if (password !== confirmPassword) {
       setError("Passwords do not match");
       return;
@@ -45,7 +51,7 @@ export function SignupForm({
     setIsLoading(true);
 
     try {
-      await signup({ email, password });
+      await signup({ email, password, username: username.trim() });
       router.push("/dashboard");
     } catch (err: any) {
       setError(err.message || "Signup failed. Please try again.");
@@ -75,6 +81,22 @@ export function SignupForm({
         )}
 
         <Field>
+          <FieldLabel htmlFor="username">Username</FieldLabel>
+          <Input
+            id="username"
+            type="text"
+            placeholder="johndoe"
+            required
+            value={username}
+            onChange={(e) => setUsername(e.target.value)}
+            disabled={isLoading}
+          />
+          <FieldDescription>
+            Choose a unique username. This will be visible to others.
+          </FieldDescription>
+        </Field>
+
+        <Field>
           <FieldLabel htmlFor="email">Email</FieldLabel>
           <Input
             id="email"
@@ -90,6 +112,7 @@ export function SignupForm({
             with anyone else.
           </FieldDescription>
         </Field>
+
         <Field>
           <FieldLabel htmlFor="password">Password</FieldLabel>
           <Input
