@@ -1,13 +1,14 @@
 'use client';
 
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
-import { authService, LoginCredentials, SignupCredentials, User as ApiUser, AuthResponse } from '@/api/auth';
+import { authService, LoginCredentials, SignupCredentials, AuthResponse } from '@/api/auth';
 
 interface AuthUser {
     id: string;
     email: string;
     username: string;
     role: string;
+    isVerified: boolean;
     avatarUrl?: string;
     createdAt?: string;
     isTwoFactorEnabled?: boolean;
@@ -17,7 +18,11 @@ interface AuthContextType {
     user: AuthUser | null;
     isLoading: boolean;
     login: (credentials: LoginCredentials) => Promise<AuthResponse>;
-    signup: (credentials: SignupCredentials) => Promise<void>;
+    signup: (credentials: SignupCredentials) => Promise<{ message: string; user: any }>;
+    verifyEmail: (token: string) => Promise<{ message: string }>;
+    resendVerificationEmail: (email: string) => Promise<{ message: string }>;
+    forgotPassword: (email: string) => Promise<{ message: string }>;
+    resetPassword: (token: string, newPassword: string, confirmPassword: string) => Promise<{ message: string }>;
     logout: () => Promise<void>;
     refreshToken: () => Promise<void>;
     updateUser: (userData: Partial<AuthUser>) => void;
@@ -37,7 +42,7 @@ interface AuthProviderProps {
     children: ReactNode;
 }
 
-// Helper function to set cookies
+// Helper functions for cookies
 const setCookie = (name: string, value: string, days: number) => {
     const date = new Date();
     date.setTime(date.getTime() + (days * 24 * 60 * 60 * 1000));
@@ -45,7 +50,6 @@ const setCookie = (name: string, value: string, days: number) => {
     document.cookie = `${name}=${value}; ${expires}; path=/; SameSite=Lax`;
 };
 
-// Helper function to get cookie
 const getCookie = (name: string): string | null => {
     if (typeof document === 'undefined') return null;
 
@@ -59,7 +63,6 @@ const getCookie = (name: string): string | null => {
     return null;
 };
 
-// Helper function to delete cookie
 const deleteCookie = (name: string) => {
     document.cookie = `${name}=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;`;
 };
@@ -68,14 +71,10 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     const [user, setUser] = useState<AuthUser | null>(null);
     const [isLoading, setIsLoading] = useState(true);
 
-    // Initialize auth state from cookies/localStorage on mount
     useEffect(() => {
         const initAuth = () => {
             if (typeof window !== 'undefined') {
-                // Try to get user from localStorage first
                 const storedUser = localStorage.getItem('user');
-
-                // Check if we have access_token in cookies (for middleware)
                 const cookieToken = getCookie('access_token');
 
                 if (storedUser && cookieToken) {
@@ -87,7 +86,6 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
                         localStorage.removeItem('user');
                     }
                 } else if (!cookieToken) {
-                    // No cookie token means we're not logged in for middleware purposes
                     setUser(null);
                     localStorage.removeItem('user');
                 }
@@ -103,22 +101,22 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         try {
             const response = await authService.login(credentials);
 
-            // Store tokens in localStorage (for client-side access)
-            localStorage.setItem('access_token', response.accessToken);
-            localStorage.setItem('refresh_token', response.refreshToken);
-            localStorage.setItem('user_id', response.user.id);
-            localStorage.setItem('user', JSON.stringify(response.user));
+            if (response.user) {
+                // Store tokens and user data
+                localStorage.setItem('access_token', response.accessToken);
+                localStorage.setItem('refresh_token', response.refreshToken);
+                localStorage.setItem('user_id', response.user.id);
+                localStorage.setItem('user', JSON.stringify(response.user));
 
-            // Store tokens in cookies (for middleware access)
-            // Access token: 1 day expiry (matches your JWT expiry)
-            setCookie('access_token', response.accessToken, 1);
-            // Refresh token: 7 days expiry
-            setCookie('refresh_token', response.refreshToken, 7);
+                // Set cookies for middleware
+                setCookie('access_token', response.accessToken, 1);
+                setCookie('refresh_token', response.refreshToken, 7);
 
-            setUser(response.user);
+                setUser(response.user);
+            }
 
             return response;
-        } catch (error) {
+        } catch (error: any) {
             console.error('AuthProvider: Login error:', error);
             throw error;
         } finally {
@@ -129,15 +127,53 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     const signup = async (credentials: SignupCredentials) => {
         setIsLoading(true);
         try {
-            const newUser = await authService.signup(credentials);
-            console.log('AuthProvider: Signup successful, user:', newUser);
-            // After signup, automatically login
-            await login(credentials);
-        } catch (error) {
+            const result = await authService.signup(credentials);
+
+            // Store email for verification page
+            localStorage.setItem('pending_verification_email', credentials.email);
+
+            return result;
+        } catch (error: any) {
             console.error('AuthProvider: Signup error:', error);
             throw error;
         } finally {
             setIsLoading(false);
+        }
+    };
+
+    const verifyEmail = async (token: string) => {
+        try {
+            return await authService.verifyEmail(token);
+        } catch (error: any) {
+            console.error('AuthProvider: Verify email error:', error);
+            throw error;
+        }
+    };
+
+    const resendVerificationEmail = async (email: string) => {
+        try {
+            return await authService.resendVerificationEmail(email);
+        } catch (error: any) {
+            console.error('AuthProvider: Resend verification email error:', error);
+            throw error;
+        }
+    };
+
+    const forgotPassword = async (email: string) => {
+        try {
+            return await authService.forgotPassword(email);
+        } catch (error: any) {
+            console.error('AuthProvider: Forgot password error:', error);
+            throw error;
+        }
+    };
+
+    const resetPassword = async (token: string, newPassword: string, confirmPassword: string) => {
+        try {
+            return await authService.resetPassword(token, newPassword, confirmPassword);
+        } catch (error: any) {
+            console.error('AuthProvider: Reset password error:', error);
+            throw error;
         }
     };
 
@@ -151,11 +187,12 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         } catch (error) {
             console.error('AuthProvider: Logout error:', error);
         } finally {
-            // Clear storage regardless of API call success
+            // Clear all storage
             localStorage.removeItem('access_token');
             localStorage.removeItem('refresh_token');
             localStorage.removeItem('user_id');
             localStorage.removeItem('user');
+            localStorage.removeItem('pending_verification_email');
 
             // Clear cookies
             deleteCookie('access_token');
@@ -179,7 +216,6 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
             if (userId && refreshToken) {
                 const response = await authService.refreshToken(userId, refreshToken);
                 localStorage.setItem('access_token', response.accessToken);
-                // Also update the cookie
                 setCookie('access_token', response.accessToken, 1);
             }
         } catch (error) {
@@ -197,7 +233,19 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     };
 
     return (
-        <AuthContext.Provider value={{ user, isLoading, login, signup, logout, refreshToken, updateUser }}>
+        <AuthContext.Provider value={{
+            user,
+            isLoading,
+            login,
+            signup,
+            verifyEmail,
+            resendVerificationEmail,
+            forgotPassword,
+            resetPassword,
+            logout,
+            refreshToken,
+            updateUser
+        }}>
             {children}
         </AuthContext.Provider>
     );

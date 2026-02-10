@@ -3,6 +3,11 @@ import { NextResponse } from "next/server";
 
 const protectedRoutes = ["/dashboard"];
 const authRoutes = ["/login", "/signup"];
+const verificationRoutes = [
+  "/verify-email",
+  "/forgot-password",
+  "/reset-password",
+];
 const publicRoutes = ["/"];
 
 export function middleware(request: NextRequest) {
@@ -18,6 +23,9 @@ export function middleware(request: NextRequest) {
       (route) => pathname === route || pathname.startsWith(`${route}/`),
     ),
     isAuthRoute: authRoutes.includes(pathname),
+    isVerificationRoute: verificationRoutes.some(
+      (route) => pathname === route || pathname.startsWith(`${route}/`),
+    ),
   });
 
   // Skip middleware for API routes and avatar endpoints
@@ -32,6 +40,9 @@ export function middleware(request: NextRequest) {
   );
 
   const isAuthRoute = authRoutes.includes(pathname);
+  const isVerificationRoute = verificationRoutes.some(
+    (route) => pathname === route || pathname.startsWith(`${route}/`),
+  );
 
   // Redirect root to dashboard if logged in, else to login
   if (pathname === "/") {
@@ -53,6 +64,16 @@ export function middleware(request: NextRequest) {
   if (isAuthRoute && token) {
     console.log("Middleware: Redirecting from auth route to dashboard");
     return NextResponse.redirect(new URL("/dashboard", request.url));
+  }
+
+  if (isVerificationRoute) {
+    console.log("Middleware: Handling verification route", pathname);
+
+    if (pathname.startsWith("/verify-email") && token) {
+      return NextResponse.next();
+    }
+
+    return NextResponse.next();
   }
 
   return NextResponse.next();

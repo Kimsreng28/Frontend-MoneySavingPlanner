@@ -16,7 +16,9 @@ export interface AuthResponse {
     email: string;
     role: string;
     username: string;
+    isVerified: boolean;
   };
+  message?: string;
 }
 
 export interface SignupCredentials {
@@ -31,6 +33,7 @@ export interface User {
   username: string;
   role: string;
   isActive: boolean;
+  isVerified: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -53,15 +56,90 @@ class AuthService {
     }
   }
 
-  async signup(credentials: SignupCredentials): Promise<User> {
+  async signup(
+    credentials: SignupCredentials,
+  ): Promise<{ message: string; user: any }> {
     try {
-      const response = await axios.post(`${this.baseURL}/users`, credentials);
+      const response = await axios.post(
+        `${this.baseURL}/auth/signup`,
+        credentials,
+      );
       return response.data;
-    } catch (error) {
-      if (axios.isAxiosError(error)) {
-        throw new Error(error.response?.data?.message || "Signup failed");
+    } catch (error: any) {
+      // More specific error handling
+      if (error.response) {
+        const errorMessage =
+          error.response.data?.message ||
+          error.response.data?.error ||
+          "Signup failed";
+        throw new Error(errorMessage);
+      } else if (error.request) {
+        throw new Error(
+          "No response from server. Please check your connection.",
+        );
+      } else {
+        throw new Error("Error setting up signup request.");
       }
-      throw error;
+    }
+  }
+
+  async verifyEmail(token: string): Promise<{ message: string }> {
+    try {
+      const response = await axios.get(
+        `${this.baseURL}/auth/verify-email/${token}`,
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(
+        error.response?.data?.message || "Email verification failed",
+      );
+    }
+  }
+
+  async resendVerificationEmail(email: string): Promise<{ message: string }> {
+    try {
+      const response = await axios.post(
+        `${this.baseURL}/auth/resend-verification`,
+        { email },
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(
+        error.response?.data?.message || "Failed to resend verification email",
+      );
+    }
+  }
+
+  async forgotPassword(email: string): Promise<{ message: string }> {
+    try {
+      const response = await axios.post(
+        `${this.baseURL}/auth/forgot-password`,
+        { email },
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(
+        error.response?.data?.message || "Failed to send password reset email",
+      );
+    }
+  }
+
+  async resetPassword(
+    token: string,
+    newPassword: string,
+    confirmPassword: string,
+  ): Promise<{ message: string }> {
+    try {
+      const response = await axios.post(`${this.baseURL}/auth/reset-password`, {
+        token,
+        newPassword,
+        confirmPassword,
+      });
+      return response.data;
+    } catch (error: any) {
+      throw new Error(
+        error.response?.data?.message || "Failed to reset password",
+      );
     }
   }
 
