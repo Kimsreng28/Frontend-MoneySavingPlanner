@@ -1,12 +1,13 @@
-"use client";
+'use client';
 
-import { Bell, Search, ChevronRight } from "lucide-react";
+import { Search, ChevronRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { SidebarTrigger } from "../ui/sidebar";
 import { useAuth } from "@/context/AuthContext";
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import { NotificationBell } from "@/components/notifications/notification-bell";
 
 interface BreadcrumbItem {
   label: string;
@@ -23,13 +24,11 @@ export const Header = ({ title, subtitle, breadcrumb = [] }: HeaderProps) => {
   const { user } = useAuth();
   const [mounted, setMounted] = useState(false);
 
-  // Ensure component is mounted on client side
   useEffect(() => {
     setMounted(true);
   }, []);
 
   if (!mounted) {
-    // Render a skeleton/loading state while on server or before mount
     return (
       <header className="flex items-center justify-between gap-2 p-4">
         <div className="flex items-center gap-4">
@@ -96,16 +95,11 @@ export const Header = ({ title, subtitle, breadcrumb = [] }: HeaderProps) => {
               />
             </div>
 
-            {/* Notifications */}
-            <Button variant="ghost" size="icon" className="relative">
-              <Bell className="w-5 h-5" />
-              <span className="absolute -top-1 -right-1 w-4 h-4 bg-destructive text-white text-xs rounded-full flex items-center justify-center">
-                3
-              </span>
-            </Button>
+            {/* Notification Bell */}
+            <NotificationBell />
           </div>
         )}
       </div>
     </header>
   );
-};  
+};
