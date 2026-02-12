@@ -1,107 +1,135 @@
-import { AppSidebar } from "@/components/app-sidebar";
-import { Header } from "@/components/dashboard/header";
-import { QuickActions } from "@/components/dashboard/quickAction";
-import { StatsCard } from "@/components/dashboard/statCard";
-import { ProtectedRoute } from "@/components/ProtectedRoute"; // Add this import
-import {
-  SidebarInset,
-  SidebarProvider,
-  SidebarTrigger,
-} from "@/components/ui/sidebar";
-import { Separator } from "@/components/ui/separator";
-import {
-  Flame,
-  Sparkles,
-  Target,
-  TrendingUp,
-  Wallet,
-} from "lucide-react";
+'use client';
 
-export default function Page() {
-  // Greeting
+import { useState, useEffect } from 'react';
+import { motion } from 'framer-motion';
+import { SidebarProvider, SidebarInset } from '@/components/ui/sidebar';
+import { Separator } from '@/components/ui/separator';
+import { Skeleton } from '@/components/ui/skeleton';
+import { AppSidebar } from '@/components/app-sidebar';
+import { Header } from '@/components/dashboard/header';
+import { QuickActions } from '@/components/dashboard/quickAction';
+import { StatsCards } from '@/components/dashboard/stats-cards';
+import { UpcomingItems } from '@/components/dashboard/upcoming-items';
+import { RecentActivity } from '@/components/dashboard/recent-activity';
+import { ProgressCharts } from '@/components/dashboard/progress-charts';
+import { ProtectedRoute } from '@/components/ProtectedRoute';
+import { useAuth } from '@/context/AuthContext';
+import { useToast } from '@/hooks/use-toast';
+import { dashboardService, DashboardData } from '@/types/dashboard';
+import { useRouter } from 'next/navigation';
+
+export default function DashboardPage() {
+  const { user } = useAuth();
+  const { toast } = useToast();
+  const router = useRouter();
+  const [data, setData] = useState<DashboardData | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    if (user) {
+      fetchDashboardData();
+    }
+  }, [user]);
+
+  const fetchDashboardData = async () => {
+    setLoading(true);
+    try {
+      const dashboardData = await dashboardService.getDashboardData();
+      setData(dashboardData);
+    } catch (error: any) {
+      toast({
+        title: 'Error',
+        description: error.message || 'Failed to load dashboard data',
+        variant: 'destructive',
+      });
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const greeting = () => {
     const hour = new Date().getHours();
-    if (hour < 12) return "Good morning";
-    if (hour < 18) return "Good afternoon";
-    return "Good evening";
+    if (hour < 12) return 'Good morning';
+    if (hour < 18) return 'Good afternoon';
+    return 'Good evening';
+  };
+
+  const handleAddSaving = () => {
+    // Navigate to goals page with dialog open? or just navigate
+    router.push('/goals');
+  };
+
+  const handleNewPlan = () => {
+    router.push('/saving-plans');
+  };
+
+  const handleSchedule = () => {
+    router.push('/tasks');
+  };
+
+  const handleViewReports = () => {
+    router.push('/reports');
   };
 
   return (
-    <ProtectedRoute> {/* Wrap everything with ProtectedRoute */}
+    <ProtectedRoute>
       <SidebarProvider>
-        {/* Logo Enterprise */}
         <AppSidebar />
-
-        {/* Main Content */}
         <SidebarInset>
-          {/* Header */}
           <Header
-            title={`${greeting()}`}
-            subtitle="Here's your savings overview for today"
+            title={greeting()}
+            subtitle={user?.username ? `Welcome back, ${user.username}!` : 'Here\'s your savings overview'}
           />
-
           <Separator />
 
-          {/* Button Quick Actions */}
-          <div className="gap-2 p-4">
-            <QuickActions onAddSaving={() => { }} onNewPlan={() => { }} />
-          </div>
+          <div className="p-6 space-y-6">
+            {/* Quick Actions */}
+            <QuickActions
+              onAddSaving={handleAddSaving}
+              onNewPlan={handleNewPlan}
+              onSchedule={handleSchedule}
+              onViewReports={handleViewReports}
+            />
 
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 items-stretch p-4">
             {/* Stats Cards */}
-            <StatsCard
-              title="Total Saved"
-              value="$1,234"
-              subtitle="Across all plans"
-              icon={Wallet}
-              variant="primary"
-              trend={{ value: 12, isPositive: true }}
-            />
-            <StatsCard
-              title="Active Plans"
-              value="2"
-              subtitle="In progress"
-              icon={Target}
-            />
-            <StatsCard
-              title="Current Streak"
-              value="5"
-              subtitle="Best: 28 days"
-              icon={Flame}
-              variant="accent"
-            />
-            <StatsCard
-              title="This Month"
-              value="$1,234"
-              subtitle="+$130 vs last month"
-              icon={TrendingUp}
-              trend={{ value: 18, isPositive: true }}
-            />
-          </div>
-
-          {/* Charts */}
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3 items-stretch p-4">
-            {/* Overall Progress */}
-            <div className="card-elevated bg-muted/50 rounded-xl flex flex-col h-full min-h-[300px]">
-              <div className="flex items-center justify-between p-4 mb-4">
-                <h3 className="font-display font-semibold text-lg text-foreground">
-                  Overall Progress
-                </h3>
-                <Sparkles className="h-5 w-5 text-primary" />
-              </div>
-              {/* Content */}
-              <div className="flex-1 p-4"></div>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+              {loading ? (
+                Array.from({ length: 4 }).map((_, i) => (
+                  <div key={i} className="space-y-2">
+                    <Skeleton className="h-24 w-full" />
+                  </div>
+                ))
+              ) : (
+                data && <StatsCards summary={data.summary} />
+              )}
             </div>
 
-            {/* Savings Chart */}
-            <div className="lg:col-span-2 bg-muted/50 rounded-xl flex flex-col h-full min-h-[300px]">
-              <div className="flex items-center justify-between p-4 mb-4">
-                <h3 className="font-display font-semibold text-lg text-foreground">
-                  Savings Growth
-                </h3>
-              </div>
-              {/* Content */}
-              <div className="flex-1 p-4"></div>
+            {/* Upcoming Items & Recent Activity */}
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              {loading ? (
+                <>
+                  <Skeleton className="h-64 w-full" />
+                  <Skeleton className="h-64 w-full" />
+                </>
+              ) : (
+                <>
+                  {data && <UpcomingItems items={data.upcomingItems} />}
+                  {data && <RecentActivity activities={data.recentActivities} />}
+                </>
+              )}
+            </div>
+
+            {/* Charts & Progress */}
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+              {loading ? (
+                <>
+                  <Skeleton className="h-80 w-full" />
+                  <Skeleton className="h-80 w-full lg:col-span-2" />
+                  <Skeleton className="h-64 w-full" />
+                </>
+              ) : (
+                data && <ProgressCharts data={data} />
+              )}
             </div>
           </div>
         </SidebarInset>

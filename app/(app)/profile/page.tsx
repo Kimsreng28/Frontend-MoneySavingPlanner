@@ -5,7 +5,6 @@ import { AppSidebar } from "@/components/app-sidebar";
 import {
   SidebarInset,
   SidebarProvider,
-  SidebarTrigger,
 } from "@/components/ui/sidebar";
 import { ProtectedRoute } from "@/components/ProtectedRoute";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
@@ -22,12 +21,15 @@ import {
   CreditCard, Upload, X, Camera, UserIcon, Key, Smartphone,
   Monitor, LogOut, Check, Eye, EyeOff, QrCode, Copy, CheckCircle,
   AlertCircle, Loader2,
-  BadgeCheck
+  BadgeCheck, PiggyBank, Target, Award
 } from "lucide-react";
 import { format } from "date-fns";
 import { useState, useEffect, useRef, ChangeEvent } from "react";
 import { useToast } from "@/hooks/use-toast";
 import apiClient from "@/api/api-client";
+import { dashboardService } from "@/types/dashboard";
+import { goalService } from "@/api/goals";
+import { taskService } from "@/api/tasks";
 import {
   Dialog,
   DialogContent,
@@ -48,12 +50,9 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
-import { Textarea } from "@/components/ui/textarea";
 import { TwoFactorSetup } from "@/types/two-factore";
 import { Session } from "@/types/session";
-import { create } from "domain";
-
-
+import { formatCurrency } from "@/lib/utils";
 
 export default function ProfilePage() {
   const { user, refreshToken, logout } = useAuth();
@@ -61,6 +60,15 @@ export default function ProfilePage() {
   const [isEditing, setIsEditing] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const [avatarDataUrl, setAvatarDataUrl] = useState<string | null>(null);
+
+  // Real data states
+  const [totalSavings, setTotalSavings] = useState(0);
+  const [monthlyGoalProgress, setMonthlyGoalProgress] = useState(0);
+  const [activeGoalsCount, setActiveGoalsCount] = useState(0);
+  const [completedGoalsCount, setCompletedGoalsCount] = useState(0);
+  const [pendingTasksCount, setPendingTasksCount] = useState(0);
+  const [isLoadingStats, setIsLoadingStats] = useState(true);
+
   const [profileData, setProfileData] = useState({
     email: user?.email || '',
     username: user?.username || '',
@@ -101,6 +109,55 @@ export default function ProfilePage() {
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  // Fetch real savings data
+  const fetchSavingsData = async () => {
+    try {
+      setIsLoadingStats(true);
+
+      // Get dashboard data for total savings
+      const dashboardData = await dashboardService.getDashboardData();
+      setTotalSavings(dashboardData.summary.financial.totalSaved);
+
+      // Get goals data
+      const goalsData = await goalService.getAllGoals();
+      const activeGoals = goalsData.filter(g => !g.isCompleted).length;
+      const completedGoals = goalsData.filter(g => g.isCompleted).length;
+      setActiveGoalsCount(activeGoals);
+      setCompletedGoalsCount(completedGoals);
+
+      // Calculate monthly goal progress (overall progress from dashboard)
+      setMonthlyGoalProgress(dashboardData.summary.goals.overallProgress);
+
+      // Get tasks data
+      const tasksData = await taskService.getAllTasks();
+      const pendingTasks = tasksData.filter(t => !t.isCompleted).length;
+      setPendingTasksCount(pendingTasks);
+
+    } catch (error: any) {
+      console.error('Failed to fetch savings data:', error);
+
+      // Fallback to goals data if dashboard fails
+      try {
+        const goalsData = await goalService.getAllGoals();
+        const totalSaved = goalsData.reduce((sum, goal) => sum + Number(goal.currentAmount), 0);
+        const totalTarget = goalsData.reduce((sum, goal) => sum + Number(goal.targetAmount), 0);
+        const overallProgress = totalTarget > 0 ? (totalSaved / totalTarget) * 100 : 0;
+
+        setTotalSavings(totalSaved);
+        setMonthlyGoalProgress(overallProgress);
+        setActiveGoalsCount(goalsData.filter(g => !g.isCompleted).length);
+        setCompletedGoalsCount(goalsData.filter(g => g.isCompleted).length);
+      } catch (goalsError) {
+        console.error('Failed to fetch goals data:', goalsError);
+        // Set default values if both fail
+        setTotalSavings(0);
+        setMonthlyGoalProgress(0);
+      }
+    } finally {
+      setIsLoadingStats(false);
+    }
+  };
+
   // Fetch user profile data including avatar
   useEffect(() => {
     const fetchUserProfile = async () => {
@@ -128,6 +185,9 @@ export default function ProfilePage() {
               fetchAvatar();
             }
           }
+
+          // Fetch savings data
+          await fetchSavingsData();
         }
       } catch (error) {
         console.error('Failed to load profile:', error);
@@ -637,31 +697,88 @@ export default function ProfilePage() {
 
                 <Card>
                   <CardHeader>
-                    <CardTitle className="text-lg">Quick Stats</CardTitle>
+                    <CardTitle className="text-lg flex items-center gap-2">
+                      <Award className="h-5 w-5" />
+                      Quick Stats
+                    </CardTitle>
                   </CardHeader>
-                  <CardContent className="space-y-4">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        <div className="p-2 bg-blue-50 rounded-md">
-                          <DollarSign className="h-4 w-4 text-blue-600" />
-                        </div>
-                        <div>
-                          <p className="text-sm font-medium">Total Savings</p>
-                          <p className="text-2xl font-bold">$12,450</p>
-                        </div>
+                  <CardContent className="space-y-6">
+                    {isLoadingStats ? (
+                      <div className="flex justify-center py-4">
+                        <Loader2 className="h-8 w-8 animate-spin text-primary" />
                       </div>
-                    </div>
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        <div className="p-2 bg-green-50 rounded-md">
-                          <TrendingUp className="h-4 w-4 text-green-600" />
+                    ) : (
+                      <>
+                        {/* Total Savings */}
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-3">
+                            <div className="p-2 bg-blue-50 dark:bg-blue-900/30 rounded-lg">
+                              <PiggyBank className="h-5 w-5 text-blue-600 dark:text-blue-400" />
+                            </div>
+                            <div>
+                              <p className="text-sm font-medium">Total Savings</p>
+                              <p className="text-2xl font-bold text-blue-600 dark:text-blue-400">
+                                {formatCurrency(totalSavings)}
+                              </p>
+                            </div>
+                          </div>
                         </div>
-                        <div>
-                          <p className="text-sm font-medium">Monthly Goal</p>
-                          <p className="text-2xl font-bold">85%</p>
+
+                        <Separator />
+
+                        {/* Monthly Goal Progress */}
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-3">
+                            <div className="p-2 bg-green-50 dark:bg-green-900/30 rounded-lg">
+                              <Target className="h-5 w-5 text-green-600 dark:text-green-400" />
+                            </div>
+                            <div>
+                              <p className="text-sm font-medium">Overall Progress</p>
+                              <p className="text-2xl font-bold text-green-600 dark:text-green-400">
+                                {Math.round(monthlyGoalProgress)}%
+                              </p>
+                            </div>
+                          </div>
                         </div>
-                      </div>
-                    </div>
+
+                        <Separator />
+
+                        {/* Goals Stats */}
+                        <div className="grid grid-cols-2 gap-4">
+                          <div className="text-center p-3 bg-muted/50 rounded-lg">
+                            <p className="text-xs text-muted-foreground">Active Goals</p>
+                            <p className="text-xl font-bold">{activeGoalsCount}</p>
+                          </div>
+                          <div className="text-center p-3 bg-muted/50 rounded-lg">
+                            <p className="text-xs text-muted-foreground">Completed</p>
+                            <p className="text-xl font-bold">{completedGoalsCount}</p>
+                          </div>
+                        </div>
+
+                        {/* Tasks Stats */}
+                        <div className="flex items-center justify-between p-3 bg-amber-50 dark:bg-amber-900/30 rounded-lg">
+                          <div className="flex items-center gap-2">
+                            <div className="p-1.5 bg-amber-100 dark:bg-amber-800 rounded-full">
+                              <Calendar className="h-4 w-4 text-amber-600 dark:text-amber-300" />
+                            </div>
+                            <div>
+                              <p className="text-xs text-amber-700 dark:text-amber-300">Pending Tasks</p>
+                              <p className="text-lg font-bold text-amber-700 dark:text-amber-300">
+                                {pendingTasksCount}
+                              </p>
+                            </div>
+                          </div>
+                          <Button
+                            variant="link"
+                            size="sm"
+                            className="text-amber-700 dark:text-amber-300"
+                            onClick={() => window.location.href = '/tasks'}
+                          >
+                            View Tasks
+                          </Button>
+                        </div>
+                      </>
+                    )}
                   </CardContent>
                 </Card>
               </div>

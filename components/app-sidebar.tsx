@@ -6,8 +6,6 @@ import {
   Command,
   Goal,
   LayoutDashboard,
-  LifeBuoy,
-  Send,
   Settings2,
   SquareCheckBig,
   TrendingUp,
@@ -17,8 +15,6 @@ import {
 } from "lucide-react";
 
 import { NavMain } from "@/components/nav-main";
-import { NavProjects } from "@/components/nav-projects";
-import { NavSecondary } from "@/components/nav-secondary";
 import { NavUser } from "@/components/nav-user";
 import {
   Sidebar,
@@ -30,9 +26,37 @@ import {
   SidebarMenuItem,
 } from "@/components/ui/sidebar";
 import { useAuth } from "@/context/AuthContext";
+import { dashboardService } from "@/types/dashboard";
+import { Skeleton } from "@/components/ui/skeleton";
+import { formatCurrency } from "@/lib/utils";
 
 export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
   const { user } = useAuth();
+  const [totalSaved, setTotalSaved] = React.useState<number | null>(null);
+  const [monthlyChange, setMonthlyChange] = React.useState<number | null>(null);
+  const [isLoading, setIsLoading] = React.useState(true);
+
+  React.useEffect(() => {
+    const fetchDashboardData = async () => {
+      if (!user) return;
+
+      try {
+        setIsLoading(true);
+        const data = await dashboardService.getDashboardData();
+        setTotalSaved(data.summary.financial.totalSaved);
+        setMonthlyChange(data.summary.financial.monthlyChange);
+      } catch (error) {
+        console.error('Failed to fetch dashboard data:', error);
+        // Fallback to 0 if API fails
+        setTotalSaved(0);
+        setMonthlyChange(0);
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
+    fetchDashboardData();
+  }, [user]);
 
   const navMain = [
     {
@@ -114,22 +138,34 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
         {/* Main Navigation Platform */}
         <NavMain items={navMain} />
 
-        {/* Quick Stats Section */}
+        {/* Quick Stats Section with Real Data */}
         <div className="px-4 py-3">
           <div className="rounded-lg bg-sidebar-accent p-3">
             <div className="flex items-center gap-2 text-sm font-medium">
               <Wallet className="h-4 w-4" />
               <span>Total Saved</span>
             </div>
-            <div className="mt-2 text-2xl font-bold">$12,450</div>
+            <div className="mt-2 text-2xl font-bold">
+              {isLoading ? (
+                <Skeleton className="h-8 w-24 bg-sidebar-accent-foreground/10" />
+              ) : (
+                formatCurrency(totalSaved || 0)
+              )}
+            </div>
             <div className="mt-1 text-xs text-sidebar-accent-foreground/70">
-              +12% from last month
+              {isLoading ? (
+                <Skeleton className="h-4 w-20 bg-sidebar-accent-foreground/10" />
+              ) : (
+                <>
+                  {monthlyChange && monthlyChange > 0 ? '+' : ''}
+                  {monthlyChange}% from last month
+                </>
+              )}
             </div>
           </div>
         </div>
       </SidebarContent>
       <SidebarFooter>
-        {/* NavUser now gets user from AuthContext internally */}
         <NavUser />
       </SidebarFooter>
     </Sidebar>
