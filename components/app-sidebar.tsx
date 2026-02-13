@@ -12,6 +12,7 @@ import {
   Wallet,
   Target,
   PieChart,
+  Calendar,
 } from "lucide-react";
 
 import { NavMain } from "@/components/nav-main";
@@ -91,9 +92,9 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
       items: [],
     },
     {
-      title: "Analytics",
-      url: "/analytics",
-      icon: PieChart,
+      title: "Calendar",
+      url: "/calendar",
+      icon: Calendar,
       items: [],
     },
     {

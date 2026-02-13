@@ -47,6 +47,8 @@ export function NavUser() {
 
   // Fetch avatar when user changes
   useEffect(() => {
+    let objectUrl: string | null = null;
+
     const fetchAvatar = async () => {
       if (!user?.id) {
         setAvatarDataUrl(null);
@@ -55,24 +57,31 @@ export function NavUser() {
 
       try {
         const response = await apiClient.get(`/users/avatar/${user.id}`, {
-          responseType: 'blob',
+          responseType: "blob",
         });
 
-        const blob = new Blob([response.data], { type: response.headers['content-type'] });
-        const dataUrl = URL.createObjectURL(blob);
-        setAvatarDataUrl(dataUrl);
-      } catch (error) {
-        console.error('Failed to load avatar in NavUser:', error);
+        const blob = new Blob([response.data], {
+          type: response.headers["content-type"],
+        });
+
+        objectUrl = URL.createObjectURL(blob);
+        setAvatarDataUrl(objectUrl);
+      } catch (error: any) {
+        if (error.response?.status === 404) {
+          setAvatarDataUrl(null);
+          return;
+        }
+
+        console.error("Failed to load avatar:", error);
         setAvatarDataUrl(null);
       }
     };
 
     fetchAvatar();
 
-    // Cleanup function
     return () => {
-      if (avatarDataUrl) {
-        URL.revokeObjectURL(avatarDataUrl);
+      if (objectUrl) {
+        URL.revokeObjectURL(objectUrl);
       }
     };
   }, [user?.id]);
