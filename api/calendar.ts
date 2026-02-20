@@ -80,6 +80,21 @@ class CalendarService {
       );
     }
   }
+
+  async updateEventDate(
+    eventId: string,
+    newDate: Date,
+  ): Promise<CalendarEvent> {
+    try {
+      const response = await apiClient.patch(
+        `${this.baseURL}/events/${eventId}/date`,
+        { date: newDate.toISOString() },
+      );
+      return response.data;
+    } catch (error: any) {
+      throw new Error(error.response?.data?.message || "Failed to move event");
+    }
+  }
 }
 
 export const calendarService = new CalendarService();

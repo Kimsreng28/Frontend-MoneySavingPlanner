@@ -6,6 +6,7 @@ import { AppSidebar } from '@/components/app-sidebar';
 import { Header } from '@/components/dashboard/header';
 import { ProtectedRoute } from '@/components/ProtectedRoute';
 import { CalendarView } from '@/components/calendar/calendar-view';
+import { EnhancedCalendarView } from '@/components/calendar/enhanced-calendar-view';
 
 export default function CalendarPage() {
     const breadcrumb = [
@@ -25,7 +26,7 @@ export default function CalendarPage() {
                     <Separator />
 
                     <div className="p-6">
-                        <CalendarView />
+                        <EnhancedCalendarView />
                     </div>
                 </SidebarInset>
             </SidebarProvider>

@@ -2,6 +2,8 @@
 
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 import { authService, LoginCredentials, SignupCredentials, AuthResponse } from '@/api/auth';
+import apiClient from '@/api/api-client';
+import { onForegroundMessage, requestNotificationPermission } from '@/lib/firebase';
 
 interface AuthUser {
     id: string;
@@ -67,6 +69,24 @@ const deleteCookie = (name: string) => {
     document.cookie = `${name}=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;`;
 };
 
+async function registerFcmToken(): Promise<void> {
+    try {
+        const token = await requestNotificationPermission();
+        console.log('🔥 FCM Token:', token);
+        if (!token) return;
+
+        // Skip if same token already registered
+        const stored = localStorage.getItem('fcm_token');
+        if (stored === token) return;
+
+        await apiClient.patch('/users/fcm-token', { fcmToken: token });
+        localStorage.setItem('fcm_token', token);
+        console.log('[FCM] Token registered successfully.');
+    } catch (error) {
+        console.error('[FCM] Failed to register token:', error);
+    }
+}
+
 export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     const [user, setUser] = useState<AuthUser | null>(null);
     const [isLoading, setIsLoading] = useState(true);
@@ -96,6 +116,15 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         initAuth();
     }, []);
 
+    useEffect(() => {
+        if (!user) return;
+        let unsubscribe: (() => void) | null = null;
+        onForegroundMessage((payload) => {
+            console.log('[FCM] Foreground message received:', payload);
+        }).then((fn) => { unsubscribe = fn; });
+        return () => { unsubscribe?.(); };
+    }, [user]);
+
     const login = async (credentials: LoginCredentials): Promise<AuthResponse> => {
         setIsLoading(true);
         try {
@@ -113,6 +142,8 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
                 setCookie('refresh_token', response.refreshToken, 7);
 
                 setUser(response.user);
+
+                registerFcmToken();
             }
 
             return response;

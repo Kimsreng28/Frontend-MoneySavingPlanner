@@ -9,26 +9,33 @@ import apiClient from "./api-client";
 class NotificationService {
   private baseURL = "/notifications";
 
+  private handleError(error: any, fallback: string): never {
+    console.error(`[NotificationService] ${fallback}:`, {
+      status: error.response?.status,
+      message: error.response?.data?.message,
+      data: error.response?.data,
+    });
+    throw new Error(error.response?.data?.message || fallback);
+  }
+
   async getNotifications(
     filters?: NotificationFilters,
   ): Promise<NotificationsResponse> {
-    try {
-      const params = new URLSearchParams();
-      if (filters?.isRead !== undefined)
-        params.append("isRead", String(filters.isRead));
-      if (filters?.type) params.append("type", filters.type);
-      if (filters?.channel) params.append("channel", filters.channel);
-      if (filters?.page) params.append("page", String(filters.page));
-      if (filters?.limit) params.append("limit", String(filters.limit));
+    const params = new URLSearchParams();
+    if (filters?.isRead !== undefined)
+      params.append("isRead", String(filters.isRead));
+    if (filters?.type) params.append("type", filters.type);
+    if (filters?.channel) params.append("channel", filters.channel);
+    if (filters?.page) params.append("page", String(filters.page));
+    if (filters?.limit) params.append("limit", String(filters.limit));
 
+    try {
       const response = await apiClient.get(
         `${this.baseURL}?${params.toString()}`,
       );
       return response.data;
     } catch (error: any) {
-      throw new Error(
-        error.response?.data?.message || "Failed to fetch notifications",
-      );
+      this.handleError(error, "Failed to fetch notifications");
     }
   }
 
@@ -37,9 +44,7 @@ class NotificationService {
       const response = await apiClient.get(`${this.baseURL}/unread/count`);
       return response.data;
     } catch (error: any) {
-      throw new Error(
-        error.response?.data?.message || "Failed to fetch unread count",
-      );
+      this.handleError(error, "Failed to fetch unread count");
     }
   }
 
@@ -48,9 +53,7 @@ class NotificationService {
       const response = await apiClient.get(`${this.baseURL}/stats`);
       return response.data;
     } catch (error: any) {
-      throw new Error(
-        error.response?.data?.message || "Failed to fetch notification stats",
-      );
+      this.handleError(error, "Failed to fetch notification stats");
     }
   }
 
@@ -59,9 +62,7 @@ class NotificationService {
       const response = await apiClient.get(`${this.baseURL}/${id}`);
       return response.data;
     } catch (error: any) {
-      throw new Error(
-        error.response?.data?.message || "Failed to fetch notification",
-      );
+      this.handleError(error, "Failed to fetch notification");
     }
   }
 
@@ -70,26 +71,24 @@ class NotificationService {
   ): Promise<{ success: boolean; count: number }> {
     try {
       const response = await apiClient.patch(`${this.baseURL}/mark-as-read`, {
-        notificationIds,
+        notificationIds: notificationIds ?? [],
       });
       return response.data;
     } catch (error: any) {
-      throw new Error(
-        error.response?.data?.message || "Failed to mark as read",
-      );
+      this.handleError(error, "Failed to mark as read");
     }
   }
 
   async markAllAsRead(): Promise<{ success: boolean; count: number }> {
     try {
+      // Send empty body explicitly — some backends reject PATCH with no body
       const response = await apiClient.patch(
         `${this.baseURL}/mark-all-as-read`,
+        {},
       );
       return response.data;
     } catch (error: any) {
-      throw new Error(
-        error.response?.data?.message || "Failed to mark all as read",
-      );
+      this.handleError(error, "Failed to mark all as read");
     }
   }
 
@@ -97,9 +96,7 @@ class NotificationService {
     try {
       await apiClient.delete(`${this.baseURL}/${id}`);
     } catch (error: any) {
-      throw new Error(
-        error.response?.data?.message || "Failed to delete notification",
-      );
+      this.handleError(error, "Failed to delete notification");
     }
   }
 
@@ -108,9 +105,7 @@ class NotificationService {
       const response = await apiClient.delete(`${this.baseURL}/read`);
       return response.data;
     } catch (error: any) {
-      throw new Error(
-        error.response?.data?.message || "Failed to delete read notifications",
-      );
+      this.handleError(error, "Failed to delete read notifications");
     }
   }
 }

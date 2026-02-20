@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { Bell, CheckCheck, Trash2, Settings } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
@@ -27,18 +27,14 @@ export function NotificationBell() {
     const page = useRef(1);
     const hasMore = useRef(true);
 
-    useEffect(() => {
-        if (user) {
-            fetchNotifications();
-            fetchUnreadCount();
+    // Deduplicate notifications by id
+    const mergeNotifications = (prev: Notification[], incoming: Notification[]): Notification[] => {
+        const map = new Map(prev.map(n => [n.id, n]));
+        incoming.forEach(n => map.set(n.id, n));
+        return Array.from(map.values());
+    };
 
-            // Poll for new notifications every 30 seconds
-            const interval = setInterval(fetchUnreadCount, 30000);
-            return () => clearInterval(interval);
-        }
-    }, [user]);
-
-    const fetchNotifications = async (reset = false) => {
+    const fetchNotifications = useCallback(async (reset = false) => {
         if (!user) return;
 
         setLoading(true);
@@ -51,11 +47,13 @@ export function NotificationBell() {
             const response = await notificationService.getNotifications({
                 page: page.current,
                 limit: 10,
-                isRead: activeTab === 'unread' ? false : undefined
+                isRead: activeTab === 'unread' ? false : undefined,
             });
 
             setNotifications(prev =>
-                reset ? response.notifications : [...prev, ...response.notifications]
+                reset
+                    ? response.notifications
+                    : mergeNotifications(prev, response.notifications) // append deduped
             );
 
             hasMore.current = response.notifications.length === 10;
@@ -64,9 +62,9 @@ export function NotificationBell() {
         } finally {
             setLoading(false);
         }
-    };
+    }, [user, activeTab]);
 
-    const fetchUnreadCount = async () => {
+    const fetchUnreadCount = useCallback(async () => {
         if (!user) return;
         try {
             const { count } = await notificationService.getUnreadCount();
@@ -74,7 +72,23 @@ export function NotificationBell() {
         } catch (error) {
             console.error('Failed to fetch unread count:', error);
         }
-    };
+    }, [user]);
+
+    useEffect(() => {
+        if (user) {
+            fetchNotifications(true);
+            fetchUnreadCount();
+            const interval = setInterval(fetchUnreadCount, 30000);
+            return () => clearInterval(interval);
+        }
+    }, [user]);
+
+    // Re-fetch when tab changes
+    useEffect(() => {
+        if (user) {
+            fetchNotifications(true);
+        }
+    }, [activeTab]);
 
     const handleMarkAsRead = async (id: string) => {
         try {
@@ -91,9 +105,7 @@ export function NotificationBell() {
     const handleMarkAllAsRead = async () => {
         try {
             await notificationService.markAllAsRead();
-            setNotifications(prev =>
-                prev.map(n => ({ ...n, isRead: true }))
-            );
+            setNotifications(prev => prev.map(n => ({ ...n, isRead: true })));
             setUnreadCount(0);
         } catch (error) {
             console.error('Failed to mark all as read:', error);
@@ -102,11 +114,10 @@ export function NotificationBell() {
 
     const handleDelete = async (id: string) => {
         try {
+            const wasUnread = !notifications.find(n => n.id === id)?.isRead;
             await notificationService.deleteNotification(id);
             setNotifications(prev => prev.filter(n => n.id !== id));
-            if (!notifications.find(n => n.id === id)?.isRead) {
-                setUnreadCount(prev => Math.max(0, prev - 1));
-            }
+            if (wasUnread) setUnreadCount(prev => Math.max(0, prev - 1));
         } catch (error) {
             console.error('Failed to delete notification:', error);
         }
@@ -114,7 +125,7 @@ export function NotificationBell() {
 
     const handleDeleteAllRead = async () => {
         try {
-            const { count } = await notificationService.deleteAllRead();
+            await notificationService.deleteAllRead();
             setNotifications(prev => prev.filter(n => !n.isRead));
         } catch (error) {
             console.error('Failed to delete read notifications:', error);
@@ -123,7 +134,6 @@ export function NotificationBell() {
 
     const handleTabChange = (value: string) => {
         setActiveTab(value);
-        fetchNotifications(true);
     };
 
     const loadMore = () => {
@@ -234,7 +244,7 @@ function NotificationList({
     onLoadMore,
     onMarkAsRead,
     onDelete,
-    onDeleteAllRead
+    onDeleteAllRead,
 }: NotificationListProps) {
     const hasReadNotifications = notifications.some(n => n.isRead);
 
@@ -243,10 +253,15 @@ function NotificationList({
             <ScrollArea className="h-[400px]">
                 <AnimatePresence mode="popLayout">
                     {notifications.length === 0 && !loading ? (
-                        <div className="flex flex-col items-center justify-center h-[300px] text-muted-foreground">
+                        <motion.div
+                            key="empty"
+                            initial={{ opacity: 0 }}
+                            animate={{ opacity: 1 }}
+                            className="flex flex-col items-center justify-center h-[300px] text-muted-foreground"
+                        >
                             <Bell className="h-12 w-12 mb-2 opacity-20" />
                             <p>No notifications</p>
-                        </div>
+                        </motion.div>
                     ) : (
                         <div className="p-4">
                             {notifications.map((notification) => (
@@ -267,6 +282,12 @@ function NotificationList({
                                 >
                                     {loading ? 'Loading...' : 'Load more'}
                                 </Button>
+                            )}
+
+                            {loading && notifications.length === 0 && (
+                                <div className="flex justify-center py-4">
+                                    <div className="h-5 w-5 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+                                </div>
                             )}
                         </div>
                     )}
